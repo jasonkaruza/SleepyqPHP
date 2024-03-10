@@ -64,6 +64,7 @@ class Bed extends APIObject
     public $base = null;
     public $bedId = null;
     public $dualSleep = null;
+    public $foundationFeatures = null;
     public $generation = null;
     public $isKidsBed = null;
     public $macAddress = null;
@@ -156,6 +157,41 @@ class FavSleepNumber extends APIObject
 
 class Status extends APIObject
 {
+    public function __construct($data)
+    {
+        parent::__construct($data);
+    }
+}
+
+class FootwarmingStatus extends APIObject
+{
+    public $footWarmingStatusLeft = null;
+    public $footWarmingStatusRight = null;
+    public
+        $footWarmingTimerLeft = null;
+    public
+        $footWarmingTimerRight = null;
+    public $sides = null;
+    public function __construct($data)
+    {
+        parent::__construct($data);
+    }
+}
+
+class FoundationFeatures extends APIObject
+{
+    public $boardIsASingle = null;
+    public $easternKing = null;
+    public $hasFootControl = null;
+    public $hasFootWarming = null;
+    public $hasMassageAndLight = null;
+    public $hasUnderbedLight = null;
+    public $leftUnderbedLightPMW = null;
+    public $rightUnderbedLightPMW = null;
+    public $single = null;
+    public $splitHead = null;
+    public $splitKing = null;
+
     public function __construct($data)
     {
         parent::__construct($data);
@@ -523,6 +559,33 @@ class SleepyqPHP
         return true;
     }
 
+    /**
+     * {'bed': None,
+     * 'data': {'accountId': '<account_id>',
+     * 'active': True,
+     * 'bedId': '<bed_id>',
+     * 'birthMonth': 1,
+     * 'birthYear': '1932',
+     * 'duration': 0,
+     * 'email': 'blah@gmail.com',
+     * 'emailValidated': True,
+     * 'firstName': 'John',
+     * 'firstSessionRecorded': '2020-09-25T05:03:53Z',
+     * 'gender': 0, -- 0 for female, 1 for male
+     * 'height': 62, -- inches
+     * 'isAccountOwner': False,
+     * 'isChild': False,
+     * 'lastLogin': '2023-10-29T16:34:48Z',
+     * 'licenseVersion': 9,
+     * 'privacyPolicyVersion': 3,
+     * 'side': 0,
+     * 'sleepGoal': 480,
+     * 'sleeperId': '<sleeper_id>',
+     * 'timezone': 'US/Pacific',
+     * 'username': 'blah@gmail.com',
+     * 'weight': 111,
+     * 'zipCode': '55555'}}
+     */
     public function sleepers()
     {
         $response = $this->__makeRequest('/sleeper');
@@ -533,12 +596,44 @@ class SleepyqPHP
         return $sleepers;
     }
 
-    public function beds(): array
+    /**
+     * {'data': {'accountId': '<account_id>',
+     * 'base': None,
+     * 'bedId': '<bed_id>',
+     * 'dualSleep': True,
+     * 'generation': '360',
+     * 'isKidsBed': False,
+     * 'macAddress': '<mac_addr>',
+     * 'model': 'ILE',
+     * 'name': 'iLE',
+     * 'purchaseDate': '2020-09-07T03:34:04Z',
+     * 'reference': '<ref_id>',
+     * 'registrationDate': '2020-09-24T18:53:50Z',
+     * 'returnRequestStatus': 0,
+     * 'serial': '',
+     * 'size': 'KING-SPLIT',
+     * 'sku': 'SZILE',
+     * 'sleeperLeftId': '<sleeper_id>',
+     * 'sleeperRightId': <sleeper_id>',
+     * 'status': 1,
+     * 'timezone': 'US/Pacific',
+     * 'version': '',
+     * 'zipcode': '12345-2123'},
+     * 'left': None,
+     * 'right': None}
+     * @param $withFoundationFeatures Default to false. Includes foundation features with bed properties if true.
+     * @return array Bed objects with optional foudnation features
+     */
+    public function beds($withFoundationFeatures = false): array
     {
         $response = $this->__makeRequest('/bed');
         $beds = [];
         foreach ($response['beds'] as $bed) {
-            $beds[] = new Bed($bed);
+            $bed = new Bed($bed);
+            if ($withFoundationFeatures) {
+                $bed->foundationFeatures = $this->getFoundationFeatures($bed->bedId);
+            }
+            $beds[] = $bed;
         }
         return $beds;
     }
@@ -559,6 +654,16 @@ class SleepyqPHP
 
         foreach ($beds as $bed) {
             $familyStatus = $bedFamilyStatusesByBedId[$bed->bedId] ?? null;
+            /**
+             * {'bed': None,
+             * 'data': {'alertDetailedMessage': 'No Alert',
+             * 'alertId': 0,
+             * 'isInBed': False,
+             * 'lastLink': '00:00:00',
+             * 'pressure': 3460,
+             * 'sleepNumber': 75},
+             * 'sleeper': <sleepyq.Sleeper object at 0x7f938f5d1990>}
+             */
             foreach (['left', 'right'] as $side) {
                 $sleeperKey = 'sleeper_' . $side . '_id';
                 $sleeperId = $bed->$sleeperKey;
@@ -575,12 +680,31 @@ class SleepyqPHP
         return $beds;
     }
 
-    // To view the data, you issue a GET to the same endpoint and the response is the JSON you'd PUT.
+    /**
+     * To view the data, you issue a GET to the same endpoint and the response is the JSON you'd PUT.
+     * {
+     * footWarmingStatusLeft: FOOTWARM_TEMP value
+     * footWarmingStatusRight: FOOTWARM_TEMP value
+     * footWarmingTimerLeft: FOOTWARM_TIMER value
+     * footWarmingTimerRight: FOOTWARM_TIMER value
+     * sides => left/right => ['temp' => FOOTWARM_TEMP, 'time' => FOOTWARM_TIME]
+     * }
+     */
     public function getFoundationFootwarming($bedId = '')
     {
         $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/footwarming');
         try {
-            $result = new Status($response);
+            foreach (self::SIDES_NAMES as $side) {
+                $ucSide = ucfirst($side);
+
+                if (array_key_exists("footWarmingStatus$ucSide", $response)) {
+                    $response['sides'][$side] = [
+                        'temp' => $response["footWarmingStatus$ucSide"],
+                        'time' => $response["footWarmingTimer$ucSide"],
+                    ];
+                }
+            }
+            $result = new FootwarmingStatus($response);
         } catch (Exception $e) {
             $result = null;
         }
@@ -595,10 +719,12 @@ class SleepyqPHP
      */
     public function setFoundationFootwarming($side, $temp = self::FOOTWARM_OFF, $timer = self::FOOTWARM_30, $bedId = '')
     {
-        # {
-        #  "footWarmingTempRight": <temp>,
-        #  "footWarmingTimerRight": <time in minutes>,
-        # }
+        /**
+         * {
+         * "footWarmingTempRight": <temp>,
+         * "footWarmingTimerRight": <time in minutes>,
+         * }
+         */
         if (strtolower($side) == 'r' || strtolower($side) == 'right') {
             $side = "Right";
         } elseif (strtolower($side) == 'l' || strtolower($side) == 'left') {
@@ -616,10 +742,35 @@ class SleepyqPHP
         }
 
         $data = ['footWarmingTemp' . $side => $temp, 'footWarmingTimer' . $side => $timer];
-        $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/footwarming', "put", $data);
+        $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/footwarming', "PUT", $data);
         return true;
     }
 
+    /**
+     * {'bed': None,
+     * 'data': {
+     * 'bedId': '<bed_id>',
+     * 'leftSide': {
+     * 'alertDetailedMessage': 'No Alert',
+     * 'alertId': 0,
+     * 'isInBed': False,
+     * 'lastLink': '00:00:00',
+     * 'pressure': 3460,
+     * 'sleepNumber': 75
+     * },
+     * 'rightSide': {
+     * 'alertDetailedMessage': 'No Alert',
+     * 'alertId': 0,
+     * 'isInBed': False,
+     * 'lastLink': '00:00:00',
+     * 'pressure': 3307,
+     * 'sleepNumber': 70
+     * },
+     * 'status': 1
+     * },
+     * 'left': <sleepyq.SideStatus object at 0x7f938fa4f150>,
+     * 'right': <sleepyq.SideStatus object at 0x7f938fa4f8d0>}
+     */
     public function getBedFamilyStatus()
     {
         $response = $this->__makeRequest('/bed/familyStatus');
@@ -643,20 +794,30 @@ class SleepyqPHP
         return $bedId;
     }
 
-    # light 1-4
-    # setting False=off, True=on
+    /**
+     * @param $light 1-4 based on self::BED_LIGHTS
+     * @param $setting false=off, true=on
+     * @param $bedId Optional
+     */
     public function setLight($light, $setting, $bedId = '')
     {
         if (in_array($light, self::BED_LIGHTS)) {
             $data = ['outletId' => $light, 'setting' => $setting ? 1 : 0];
-            $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/outlet', "put", $data);
+            $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/outlet', "PUT", $data);
             return true;
         } else {
             throw new Exception("Invalid light");
         }
     }
 
-    # same light numbering as set_light
+    /**
+     * Same light numbering as set_light
+     * RIGHT_NIGHT_LIGHT
+     * {'data': {'bedId': '<bed_id>',
+     * 'outlet': 3,
+     * 'setting': 0,
+     * 'timer': None}}
+     */
     public function getLight($light, $bedId = '')
     {
         if (in_array($light, self::BED_LIGHTS)) {
@@ -669,9 +830,12 @@ class SleepyqPHP
         }
     }
 
-    # preset 1-6
-    # side "R" or "L"
-    # slowSpeed False=fast, True=slow
+    /**
+     * @param $preset 1-6 based on self::BED_PRESETS
+     * @param $side "R" or "L" or "right" or "left" (any capitalization)
+     * @param $bedId Optional
+     * @param $slowSpeed Optional. Defaults to false. false=fast, true=slow
+     */
     public function preset($preset, $side, $bedId = '', $slowSpeed = false)
     {
         if (strtolower($side) == 'r' || strtolower($side) == 'right') {
@@ -684,17 +848,21 @@ class SleepyqPHP
 
         if (in_array($preset, self::BED_PRESETS)) {
             $data = ['preset' => $preset, 'side' => $side, 'speed' => $slowSpeed ? 1 : 0];
-            $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/preset', "put", $data);
+            $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/preset', "PUT", $data);
             return true;
         } else {
             throw new Exception("Invalid preset");
         }
     }
 
-    # footSpeed 0-3
-    # headSpeed 0-3
-    # mode 0-3
-    # side "R" or "L"
+    /**
+     * @param $footSpeed 0-3
+     * @param $headSpeed 0-3
+     * @param $side "R" or "L"
+     * @param $timer Optional. Defaults to 0
+     * @param $mode Optional. Defaults to 0. 0-3 based on self::MASSAGE_MODE
+     * @param $bedId Optional
+     */
     public function setFoundationMassage($footSpeed, $headSpeed, $side, $timer = 0, $mode = 0, $bedId = '')
     {
         if (in_array($mode, self::MASSAGE_MODE)) {
@@ -706,7 +874,7 @@ class SleepyqPHP
                 return $carry && in_array($speed, self::MASSAGE_SPEED);
             }, true)) {
                 $data = ['footMassageMotor' => $footSpeed, 'headMassageMotor' => $headSpeed, 'massageTimer' => $timer, 'massageWaveMode' => $mode, 'side' => $side];
-                $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/adjustment', "put", $data);
+                $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/adjustment', "PUT", $data);
                 return true;
             } else {
                 throw new \InvalidArgumentException("Invalid head or foot speed");
@@ -716,8 +884,11 @@ class SleepyqPHP
         }
     }
 
-    # side "R" or "L"
-    # setting 0-100 (rounds to nearest multiple of 5)
+    /**
+     * @param $side "R" or "L"
+     * @param $setting 0-100 (rounds to nearest multiple of 5)
+     * @param $bedId Optional
+     */
     public function setSleepnumber($side, $setting, $bedId = '')
     {
         if ($setting < 0 || $setting > 100) {
@@ -756,10 +927,17 @@ class SleepyqPHP
             throw new \InvalidArgumentException("Side must be one of the following: left, right, L or R");
         }
         $data = ['side' => $side, "sleepNumberFavorite" => round($setting / 5) * 5];
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/sleepNumberFavorite', "put", $data);
+        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/sleepNumberFavorite', "PUT", $data);
         return true;
     }
 
+    /**
+     * {'data': {'bedId': '<bed_id>',
+     * 'sleepNumberFavoriteLeft': 75,
+     * 'sleepNumberFavoriteRight': 70},
+     * 'left': 75,
+     * 'right': 70}
+     */
     public function getFavSleepnumber($bedId = '')
     {
         $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/sleepNumberFavorite');
@@ -786,13 +964,13 @@ class SleepyqPHP
             throw new \InvalidArgumentException("Side must be one of the following: left, right, L or R");
         }
         $data = ["footMotion" => 1, "headMotion" => 1, "massageMotion" => 1, "side" => $side];
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/motion', "put", $data);
+        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/motion', "PUT", $data);
         return true;
     }
 
     public function stopPump($bedId = '')
     {
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/pump/forceIdle', "put");
+        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/pump/forceIdle', "PUT");
         return true;
     }
 
@@ -836,15 +1014,37 @@ class SleepyqPHP
         return $result;
     }
 
-    public function foundationSystem($bedId = '')
+    /**
+     * {'data': {'fsBedType': 2,
+     * 'fsBoardFaults': 0,
+     * 'fsBoardFeatures': 29,
+     * 'fsBoardHWRevisionCode': 21,
+     * 'fsBoardStatus': 0,
+     * 'fsLeftUnderbedLightPWM': 100,
+     * 'fsRightUnderbedLightPWM': 1}}
+     */
+    public function getFoundationSystem($bedId = '')
     {
         $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/system');
         return new Status($r);
     }
 
+    /**
+     * {'data': {'boardIsASingle': False,
+     * 'easternKing': False,
+     * 'hasFootControl': True,
+     * 'hasFootWarming': True,
+     * 'hasMassageAndLight': False,
+     * 'hasUnderbedLight': True,
+     * 'leftUnderbedLightPMW': 100,
+     * 'rightUnderbedLightPMW': 1,
+     * 'single': False,
+     * 'splitHead': False,
+     * 'splitKing': True}}
+     */
     public function getFoundationFeatures($bedId = '')
     {
-        $fs = $this->foundationSystem($this->defaultBedId($bedId));
+        $fs = $this->getFoundationSystem($this->defaultBedId($bedId));
         $fsBoardFeatures = $fs->fsBoardFeatures;
         $fsBedType = $fs->fsBedType;
 
@@ -870,13 +1070,16 @@ class SleepyqPHP
             $feature['boardIsASingle'] = false;
         }
 
-        return new Status($feature);
+        return new FoundationFeatures($feature);
     }
 
-    # side "R" or "L"
-    # actuator "H" or "F" (head or foot)
-    # position 0-100
-    # slowSpeed False=fast, True=slow
+    /**
+     * @param $side "R" or "L"
+     * @param $actuator "H" or "F" (head or foot)
+     * @param $position 0-100
+     * @param $bedId Optional
+     * @param $slowSpeed Optional. Defaults to false. false=fast, true=slow
+     */
     public function setFoundationPosition($side, $actuator, $position, $bedId = '', $slowSpeed = false)
     {
         if ($position < 0 || $position > 100) {
@@ -886,42 +1089,9 @@ class SleepyqPHP
         $side = strtolower($side) == 'right' ? 'R' : 'L';
         $actuator = strtolower($actuator) == 'head' ? 'H' : 'F';
         $data = ['position' => $position, 'side' => $side, 'actuator' => $actuator, 'speed' => $slowSpeed ? 1 : 0];
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/adjustment/micro', "put", $data);
+        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/adjustment/micro', "PUT", $data);
         return true;
     }
-
-    /**
-     * Get Bed state
-     */
-    public function getBedState($bedIds = [])
-    {
-        # Get each bed's current sides' statuses
-        $statuses = $this->getBedSidesStatuses();
-        foreach ($bedIds as $bedId) {
-            $sideFaves = $this->getBedFaves($bedId);
-            $sidePresets = $this->getBedSidePresets($bedId);
-            $data[$bedId] = [
-                'id' => $bedId,
-                'sides' => $sidePresets,
-            ];
-
-            # Ensure bedId in statuses dict
-            if (array_key_exists($bedId, $statuses)) {
-                $bedStatus = $statuses[$bedId];
-
-                foreach (self::SIDES_NAMES as $side) {
-                    if (array_key_exists($side, $bedStatus)) {
-                        $sideStatus = $bedStatus[$side];
-                        if ($sideStatus) {
-                            $data[$bedId]['sides'][$side]['sleepnumber'] = $sideStatus['sleepnumber'];
-                            $data[$bedId]['sides'][$side]['fave'] = $sideFaves[$side];
-                        }
-                    }
-                }
-            }
-        }
-        return $data;
-    } // End function getBedState
 
     /**
      * Get current bed presets by side
@@ -966,6 +1136,18 @@ class SleepyqPHP
     {
         $response = [];
         $statuses = $this->getBedFamilyStatus();
+        /**
+         * {'bed': None,
+         *  'data': {
+         *  'alertDetailedMessage': 'No Alert',
+         * 'alertId': 0,
+         * 'isInBed': False,
+         * 'lastLink': '00:00:00',
+         * 'pressure': 3144,
+         * 'sleepNumber': 75
+         *  },
+         * 'sleeper': None}
+         */
         foreach ($statuses as $status) {
             $response[$status->data['bedId']] = [];
             foreach (self::SIDES_NAMES as $side) {
@@ -982,11 +1164,17 @@ class SleepyqPHP
     }
 
     /**
-     * Returns if a single bed or not
+     * Returns if a single bed or not. Uses $foundationFeatures (result of 
+     * getFoundationFeatures()) if not null to extract the value. Otherwise,
+     * uses $bedId to call getFoundationFeatures.
      */
-    public function isSingleBed(string $bedId = ''): bool
+    public function isSingleBed(string $bedId = '', Status $foundationFeatures = null): bool
     {
-        $features = $this->getFoundationFeatures($bedId);
+        if ($foundationFeatures) {
+            $features = $foundationFeatures;
+        } else {
+            $features = $this->getFoundationFeatures($bedId);
+        }
         return $features->single;
     }
 
