@@ -475,22 +475,21 @@ class SleepyqPHP
                     throw new Exception("requestJSON(): Missing/Invalid Response");
                 }
 
-                if (array_key_exists('Error', $json_response) && $path == "/login") {
-                    print "Your userid/password or adjustTheBedPassProxy is invalid. Please say Alexa, ask adjust the bed to reset my information to get new signup information";
-                    exit;
-                }
+                // if (array_key_exists('Error', $json_response) && $path == "/login") {
+                //     throw new Exception("Your userid/password is invalid.");
+                // }
 
                 if ($this->requestJSONHasLoginErrors($json_response)) {
                     writeDebug(WRITE_DEBUG_MAIN_FILE, "in requestJSONHasLoginErrors");
                     unset($this->_session_params['_k']);
                     writeDebug(WRITE_DEBUG_MAIN_FILE, "token deleted for {$this->_cookieFile}");
-                    writeDebug(WRITE_DEBUG_MAIN_FILE, "Would have re-run using  $path , $data, $method\n");
+                    writeDebug(WRITE_DEBUG_MAIN_FILE, "Would have re-run using $path, " . print_r($data, true) . ", $method\n");
                     $json_response = $this->__makeRequest($path, $data, $method);
                     writeDebug(WRITE_DEBUG_MAIN_FILE, "re-executing command");
                 }
 
-                if (array_key_exists('Error', $json_response)) {
-                    throw new Exception("requestJSON(): [" . $json_response->Error->Code . "] " . $json_response->Error->Message . "");
+                if (is_array($json_response) && array_key_exists('Error', $json_response)) {
+                    throw new Exception("requestJSON(): [" . $json_response['Error']['Code'] . "] " . $json_response['Error']['Message'] . "");
                 }
 
                 writeDebug(WRITE_DEBUG_MAIN_FILE, "Dumping response");
@@ -554,6 +553,9 @@ class SleepyqPHP
 
         $responseJson = $this->__makeRequest('/login', 'PUT', $data);
 
+        if (!is_array($responseJson)) {
+            throw new Exception("Login failed");
+        }
         $this->_session_params['_k'] = $responseJson['key'];
         writeDebug(WRITE_DEBUG_MAIN_FILE, "***Setting token " . $this->_session_params['_k'] . "\n");
         return true;
