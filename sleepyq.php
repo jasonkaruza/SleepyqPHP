@@ -484,8 +484,6 @@ class SleepyqPHP
                     unset($this->_session_params['_k']);
                     writeDebug(WRITE_DEBUG_MAIN_FILE, "token deleted for {$this->_cookieFile}");
                     writeDebug(WRITE_DEBUG_MAIN_FILE, "Would have re-run using $path, " . print_r($data, true) . ", $method\n");
-                    $json_response = $this->__makeRequest($path, $data, $method);
-                    writeDebug(WRITE_DEBUG_MAIN_FILE, "re-executing command");
                 }
 
                 if (is_array($json_response) && array_key_exists('Error', $json_response)) {
