@@ -220,6 +220,7 @@ class SleepyqPHP
         self::LEFT_NIGHT_LIGHT
     ];
 
+    // 0 can also be returned, which means not in a preset state (something custom, but unsaved)
     const FAVORITE = 1;
     const READ = 2;
     const WATCH_TV = 3;
