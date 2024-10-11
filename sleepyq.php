@@ -39,6 +39,9 @@ class APIObject extends stdClass
     public function __construct($data)
     {
         $this->data = $data;
+        if (!$data) {
+            return;
+        }
 
         // Iterate through each element in $data and set the associated object property
         foreach ($data as $k => $v) {
@@ -535,6 +538,9 @@ class SleepyqPHP
 
     private function __featureCheck($value, $digit)
     {
+        if (!$value) {
+            return false;
+        }
         return (($value >> $digit) & 1) > 0;
     }
 
@@ -623,7 +629,7 @@ class SleepyqPHP
      * 'left': None,
      * 'right': None}
      * @param $withFoundationFeatures Default to false. Includes foundation features with bed properties if true.
-     * @return array Bed objects with optional foudnation features
+     * @return array Bed objects with optional foundation features
      */
     public function beds($withFoundationFeatures = false): array
     {
@@ -776,8 +782,10 @@ class SleepyqPHP
     {
         $response = $this->__makeRequest('/bed/familyStatus');
         $statuses = [];
-        foreach ($response['beds'] as $status) {
-            $statuses[] = new FamilyStatus($status);
+        if ($response) {
+            foreach ($response['beds'] as $status) {
+                $statuses[] = new FamilyStatus($status);
+            }
         }
         return $statuses;
     }
@@ -1046,8 +1054,8 @@ class SleepyqPHP
     public function getFoundationFeatures($bedId = '')
     {
         $fs = $this->getFoundationSystem($this->defaultBedId($bedId));
-        $fsBoardFeatures = $fs->fsBoardFeatures;
-        $fsBedType = $fs->fsBedType;
+        $fsBoardFeatures = $fs->fsBoardFeatures ?: null;
+        $fsBedType = $fs->fsBedType ?: null;
 
         $feature = [
             'single' => false,
@@ -1059,8 +1067,8 @@ class SleepyqPHP
             'hasFootControl' => $this->__featureCheck($fsBoardFeatures, 2),
             'hasFootWarming' => $this->__featureCheck($fsBoardFeatures, 3),
             'hasUnderbedLight' => $this->__featureCheck($fsBoardFeatures, 4),
-            'leftUnderbedLightPMW' => $fs->fsLeftUnderbedLightPWM,
-            'rightUnderbedLightPMW' => $fs->fsRightUnderbedLightPWM
+            'leftUnderbedLightPMW' => $fs->fsLeftUnderbedLightPWM ?: false,
+            'rightUnderbedLightPMW' => $fs->fsRightUnderbedLightPWM ?: false,
         ];
 
         if ($feature['hasMassageAndLight']) {
@@ -1100,6 +1108,17 @@ class SleepyqPHP
     public function getBedSidePresets(string $bedId = '')
     {
         $fs = $this->getFoundationStatus($bedId);
+        // If no foundation
+        if (!$fs->data) {
+            return
+                [
+                    self::LEFT => [
+                        'side' => self::LEFT,
+                        'preset' => null,
+                        'bed_id' => $bedId,
+                    ],
+                ];
+        }
         $presetsString = $fs->fsCurrentPositionPreset;
         $presetsList = str_split($presetsString);
         $presetData = [];
