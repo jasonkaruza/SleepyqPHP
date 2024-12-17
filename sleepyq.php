@@ -672,8 +672,8 @@ class SleepyqPHP
              * 'sleeper': <sleepyq.Sleeper object at 0x7f938f5d1990>}
              */
             foreach (['left', 'right'] as $side) {
-                $sleeperKey = 'sleeper_' . $side . '_id';
-                $sleeperId = $bed->$sleeperKey;
+                $sleeperKey = 'sleeper' . ucfirst($side) . 'Id'; // Dynamically created
+                $sleeperId = $bed->$sleeperKey; // Dynamically accessed
                 if ($sleeperId == "0") {
                     continue;
                 }
@@ -681,6 +681,7 @@ class SleepyqPHP
                 $status = $familyStatus->$side;
                 $status->sleeper = $sleeper;
                 $bed->$side = $status;
+                $bed->sides[$side] = $status;
             }
         }
 
@@ -796,11 +797,95 @@ class SleepyqPHP
             $beds = $this->beds();
             if (count($beds) == 1) {
                 $bedId = $beds[0]->data['bedId'];
-            } else {
+            }
+            /**
+             * This else should never be hit. If an exception is thrown, the 
+             * caller of this method is not passing an explicit bedId to some
+             * other method when it should be.
+             */
+            else {
                 throw new Exception("Bed ID must be specified if there is more than one bed");
             }
         }
         return $bedId;
+    }
+
+    /**
+     * Response from /sleepData API:
+     * {
+     * 'sleepers': [
+     * {
+     * sleeperId: "<id>",
+     * message: "",
+     * tip: "",
+     * avgHeartRate: 0,
+     * avgRespirationRate: 0,
+     * totalSleepSessionTime: 0,
+     * inBed: 0,
+     * outOfBed: 0,
+     * restful: 0,
+     * restless: 0,
+     * avgSleepIQ: 0,
+     * sleepData: [
+     * {
+     * tip: "Get up and go to bed at the same time each and every day, even on weekends, days off and holidays.  This prevents “social jetlag.”",
+     * message: "You had an EXCELLENT nights sleep",
+     * date: "2024-12-01",
+     * sessions: [
+     * {
+     * startDate: "2024-11-30T22:11:22",
+     * longest: true,
+     * sleepIQCalculating: false,
+     * originalStartDate: "2024-11-30T22:11:22",
+     * restful: 29059,
+     * originalEndDate: "2024-12-01T07:07:52",
+     * sleepNumber: 100,
+     * totalSleepSessionTime: 32190,
+     * avgHeartRate: 61,
+     * restless: 1350,
+     * avgRespirationRate: 14,
+     * isFinalized: true,
+     * sleepQuotient: 97,
+     * endDate: "2024-12-01T07:07:52",
+     * outOfBed: 0,
+     * inBed: 32151
+     * }
+     * ],
+     * goalEntry: null,
+     * tags: []
+     * }
+     * ]
+     * }
+     * ]
+     * }
+     * 
+     * @param string $sleeperId Optional. If not provided, both Sleepers' data will be returned
+     * @param string $interval Defaults to 'D' for Day. Can also be 'M' or 'Y'
+     * @return array Of Sleeper objects
+     */
+    public function getSleepData(string $sleeperId = null, string $interval = 'D'): array
+    {
+        // If provided interval is not valid, default to D
+        if (!in_array($interval, ['D', 'M', 'Y'])) {
+            $interval = 'D';
+        }
+        $params = [
+            'interval' => $interval . '1',
+            'sleeper' => $sleeperId,
+            'includeSlices' => false, // Unsure what this does: https://github.com/rvrolyk/SleepNumberController/blob/master/SleepNumberController_App.groovy#L2505
+            'date' => date("Y-m-d"),
+        ];
+        $query = http_build_query($params);
+        $response = $this->__makeRequest('/sleepData?' . $query);
+        // If a single sleeper was returned, bundle into an array for consistency
+        if (array_key_exists('sleeperId', $response)) {
+            $response = ['sleepers' => [$response]];
+        }
+        $sleepers = [];
+        foreach ($response['sleepers'] as $sleeper) {
+            $sleepers[] = new Sleeper($sleeper);
+        }
+        return $sleepers;
     }
 
     /**
@@ -1173,10 +1258,7 @@ class SleepyqPHP
             foreach (self::SIDES_NAMES as $side) {
                 $sideStatus = $status->{$side} ?: null;
                 if ($sideStatus != null) {
-                    $response[$status->data['bedId']][$side] = [
-                        'pressure' => $sideStatus->data['pressure'],
-                        'sleepnumber' => $sideStatus->data['sleepNumber'],
-                    ];
+                    $response[$status->data['bedId']][$side] = $sideStatus->data;
                 }
             }
         }
@@ -1261,7 +1343,7 @@ class SleepyqPHP
         // Initializes the favSleepnumber attribute
         $faves = $this->getFavsleepnumber($bedId);
         $this->preset(self::FAVORITE, $side, $bedId, false);
-        $this->setSleepnumber($side, $faves->{$side} ?: $bedId);
+        $this->setSleepnumber($side, $faves->{$side}, $bedId);
         return true;
     }
 
