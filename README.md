@@ -7,3 +7,4 @@ PHP SDK for SleepNumber API, adapted from technicalpickles sleepyq (thank you :p
  * https://github.com/tuctboh/adjustTheBed/blob/master/adjustTheBed-main.php
  * https://raw.githubusercontent.com/rvrolyk/SleepNumberController/master/SleepNumberController_App.groovy
  * https://community.hubitat.com/t/release-sleep-number-controller-control-your-sleep-number-bed-and-use-it-for-presence/46454/27?page=2
+ * https://github.com/natecj/sleepiq-php/blob/master/SleepIQ.php
