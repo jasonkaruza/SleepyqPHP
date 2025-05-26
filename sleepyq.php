@@ -7,6 +7,7 @@
  * https://github.com/tuctboh/adjustTheBed/blob/master/adjustTheBed-main.php
  * https://raw.githubusercontent.com/rvrolyk/SleepNumberController/master/SleepNumberController_App.groovy
  * https://community.hubitat.com/t/release-sleep-number-controller-control-your-sleep-number-bed-and-use-it-for-presence/46454/27?page=2
+ * https://github.com/danpenn/SleepIQ/blob/1531466e2b64/control.go
  */
 
 // Change these DEFINE() values as desired
@@ -213,7 +214,7 @@ class SleepyqPHP
 
     const RIGHT_NIGHT_STAND = 1;
     const LEFT_NIGHT_STAND = 2;
-    const RIGHT_NIGHT_LIGHT = 3;
+    const RIGHT_NIGHT_LIGHT = 3; // Active/working for me
     const LEFT_NIGHT_LIGHT = 4;
 
     const BED_LIGHTS = [
@@ -221,6 +222,39 @@ class SleepyqPHP
         self::LEFT_NIGHT_STAND,
         self::RIGHT_NIGHT_LIGHT,
         self::LEFT_NIGHT_LIGHT
+    ];
+
+    const LIGHT_SETTINGS_OFF = 0;
+    const LIGHT_SETTINGS_ON = 1;
+    const LIGHT_SETTINGS = [
+        self::LIGHT_SETTINGS_OFF,
+        self::LIGHT_SETTINGS_ON,
+    ];
+
+    const LIGHT_BRIGHTNESS_OFF = 0;
+    const LIGHT_BRIGHTNESS_LOW = 1;
+    const LIGHT_BRIGHTNESS_MEDIUM = 30;
+    const LIGHT_BRIGHTNESS_HIGH = 100;
+    const LIGHT_BRIGHTNESS = [
+        self::LIGHT_BRIGHTNESS_OFF,
+        self::LIGHT_BRIGHTNESS_LOW,
+        self::LIGHT_BRIGHTNESS_MEDIUM,
+        self::LIGHT_BRIGHTNESS_HIGH
+    ];
+
+    const LIGHT_TIMER_15 = 15;
+    const LIGHT_TIMER_30 = 30;
+    const LIGHT_TIMER_45 = 45;
+    const LIGHT_TIMER_60 = 60;
+    const LIGHT_TIMER_120 = 120;
+    const LIGHT_TIMER_180 = 180;
+    const LIGHT_TIMER = [
+        self::LIGHT_TIMER_15,
+        self::LIGHT_TIMER_30,
+        self::LIGHT_TIMER_45,
+        self::LIGHT_TIMER_60,
+        self::LIGHT_TIMER_120,
+        self::LIGHT_TIMER_180
     ];
 
     // 0 can also be returned, which means not in a preset state (something custom, but unsaved)
@@ -645,6 +679,165 @@ class SleepyqPHP
         return $beds;
     }
 
+    /**
+     * Get a bunch of information about the current bed state including sleepr 
+     * info.
+     * @return [
+     *   {
+     *       "data": {
+     *           "registrationDate": "2020-09-24T18:53:50Z",
+     *           "sleeperRightId": "<sleeperId>",
+     *           "base": null,
+     *           "returnRequestStatus": 0,
+     *           "size": "KING-SPLIT",
+     *           "name": "iLE",
+     *           "serial": "",
+     *           "isKidsBed": false,
+     *           "dualSleep": true,
+     *           "bedId": "<bedId>",
+     *           "status": 1,
+     *           "sleeperLeftId": "<sleeperId>",
+     *           "version": "",
+     *           "accountId": "<accountId>",
+     *           "timezone": "US\/Pacific",
+     *           "generation": "360",
+     *           "model": "ILE",
+     *           "purchaseDate": "2020-09-07T17:01:08Z",
+     *           "macAddress": "<macAddress>",
+     *           "sku": "SZILE",
+     *           "zipcode": "<zipcode>",
+     *           "reference": "<referenceId>"
+     *       },
+     *       "left": {
+     *           "data": {
+     *               "isInBed": false,
+     *               "alertDetailedMessage": "No Alert",
+     *               "sleepNumber": 100,
+     *               "alertId": 0,
+     *               "lastLink": "00:00:00",
+     *               "pressure": 3943
+     *           },
+     *           "alertDetailedMessage": "No Alert",
+     *           "alertId": 0,
+     *           "bed": null,
+     *           "isInBed": false,
+     *           "lastLink": "00:00:00",
+     *           "pressure": 3943,
+     *           "sleeper": {
+     *               "data": {
+     *                   "firstName": "<firstName>",
+     *                   "active": true,
+     *                   "emailValidated": true,
+     *                   "gender": 0,
+     *                   "isChild": false,
+     *                   "bedId": "<bedId>",
+     *                   "birthYear": "<year>",
+     *                   "zipCode": "<zipCode>",
+     *                   "timezone": "US\/Pacific",
+     *                   "privacyPolicyVersion": 6,
+     *                   "duration": 0,
+     *                   "weight": <weight>,
+     *                   "sleeperId": "<sleeperId>",
+     *                   "firstSessionRecorded": "2020-09-25T05:03:53Z",
+     *                   "height": <height>,
+     *                   "licenseVersion": 9,
+     *                   "username": "<email>",
+     *                   "birthMonth": 1,
+     *                   "sleepGoal": 480,
+     *                   "accountId": "<accountId>",
+     *                   "isAccountOwner": false,
+     *                   "email": "<email>",
+     *                   "lastLogin": "2025-05-24T16:19:04Z",
+     *                   "side": 0
+     *               },
+     *               "bed": null,
+     *               "firstName": "<firstName>",
+     *               "active": true,
+     *               "emailValidated": true,
+     *               "gender": 0,
+     *               "isChild": false,
+     *               "bedId": "<bedId>",
+     *               "birthYear": "<year>",
+     *               "zipCode": "<zipCode>",
+     *               "timezone": "US\/Pacific",
+     *               "privacyPolicyVersion": 6,
+     *               "duration": 0,
+     *               "weight": <weight>,
+     *               "sleeperId": "<sleeperId>",
+     *               "firstSessionRecorded": "2020-09-25T05:03:53Z",
+     *               "height": <height>,
+     *               "licenseVersion": 9,
+     *               "username": "<email>",
+     *               "birthMonth": 1,
+     *               "sleepGoal": 480,
+     *               "accountId": "<accountId>",
+     *               "isAccountOwner": false,
+     *               "email": "<email>",
+     *               "lastLogin": "2025-05-24T16:19:04Z",
+     *               "side": 0
+     *           },
+     *           "sleepNumber": 100
+     *       },
+     *       "right": {
+     *           ...
+     *       },
+     *       "sides": {
+     *           "left": {
+     *               "data": {
+     *                   "isInBed": false,
+     *                   "alertDetailedMessage": "No Alert",
+     *                   "sleepNumber": 100,
+     *                   "alertId": 0,
+     *                   "lastLink": "00:00:00",
+     *                   "pressure": 3943
+     *               },
+     *               "alertDetailedMessage": "No Alert",
+     *               "alertId": 0,
+     *               "bed": null,
+     *               "isInBed": false,
+     *               "lastLink": "00:00:00",
+     *               "pressure": 3943,
+     *               "sleeper": {
+     *                   "data": {
+     *                       "firstName": "<firstName>",
+     *                       ...
+     *                   },
+     *                   "bed": null,
+     *                   "firstName": "<firstName>",
+     *                   ...
+     *               },
+     *               "sleepNumber": 100
+     *           },
+     *           "right": {
+     *               ...
+     *           }
+     *       },
+     *       "accountId": "<accountId>",
+     *       "base": null,
+     *       "bedId": "<bedId>",
+     *       "dualSleep": true,
+     *       "foundationFeatures": null,
+     *       "generation": "360",
+     *       "isKidsBed": false,
+     *       "macAddress": "<macAddress>",
+     *       "model": "ILE",
+     *       "name": "iLE",
+     *       "purchaseDate": "2020-09-07T17:01:08Z",
+     *       "reference": "<referenceId>",
+     *       "registrationDate": "2020-09-24T18:53:50Z",
+     *       "returnRequestStatus": 0,
+     *       "serial": "",
+     *       "size": "KING-SPLIT",
+     *       "sku": "SZILE",
+     *       "sleeperLeftId": "<sleeperId>",
+     *       "sleeperRightId": "<sleeperId>",
+     *       "status": 1,
+     *       "timezone": "US\/Pacific",
+     *       "version": "",
+     *       "zipcode": "<zipcode>"
+     *   }
+     * ]
+     */
     public function bedsWithSleeperStatus()
     {
         $beds = $this->beds();
@@ -825,7 +1018,7 @@ class SleepyqPHP
      * outOfBed: 0,
      * restful: 0,
      * restless: 0,
-     * avgSleepIQ: 0,
+     * avgSleepIQ: 0, // Sleep score
      * sleepData: [
      * {
      * tip: "Get up and go to bed at the same time each and every day, even on weekends, days off and holidays.  This prevents “social jetlag.”",
@@ -889,16 +1082,24 @@ class SleepyqPHP
     }
 
     /**
-     * @param $light 1-4 based on self::BED_LIGHTS
-     * @param $setting false=off, true=on
+     * https://github.com/danpenn/SleepIQ/blob/1531466e2b64/control.go#L233
+     * @param $light 1-4 based on self::BED_LIGHTS (for me, setting). Only 3 (RIGHT_NIGHT_LIGHT) works
+     * @param $setting 0=off, 1=on (from LIGHT_SETTING). Auto needs to be set with enableOrDisableUnderBedLighting().
+     * @param $timer Optional. Defaults to null (no timer). Only applicable for mode 1 (on). Can only be intervals defined via LIGHT_TIMER (or between 0 and 180)
      * @param $bedId Optional
      */
-    public function setLight($light, $setting, $bedId = '')
+    public function setLight($light, $setting, $timer = null, $bedId = '')
     {
         if (in_array($light, self::BED_LIGHTS)) {
             $data = ['outletId' => $light, 'setting' => $setting ? 1 : 0];
+            if ($timer !== null) {
+                if (!in_array($timer, self::LIGHT_TIMER)) {
+                    throw new Exception("Invalid timer duration");
+                }
+                $data['timer'] = $timer;
+            }
             $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/outlet', "PUT", $data);
-            return true;
+            return $response;
         } else {
             throw new Exception("Invalid light");
         }
@@ -922,6 +1123,35 @@ class SleepyqPHP
         } else {
             throw new Exception("Invalid light");
         }
+    }
+
+    /**
+     * Enable or disable under-bed lighting.
+     * https://github.com/danpenn/SleepIQ/blob/1531466e2b64/control.go#L323
+     * @param $enable true to enable, false to disable
+     * @param $bedId Optional. If not provided, the default bed will be used.
+     */
+    public function enableOrDisableUnderBedLighting($enable, $bedId = '')
+    {
+        $data = [
+            'enableAuto' => $enable,
+        ];
+        $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/underbedLight', "PUT", $data);
+        return $response;
+    }
+
+    /**
+     * Check if under-bed lighting auto mode is enabled.
+     * @param $bedId Optional. If not provided, the default bed will be used.
+     * @return bool true if auto mode is enabled, false otherwise
+     */
+    public function isUnderBedLightingAutoModeEnabled($bedId = '')
+    {
+        $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/underbedLight');
+        if (array_key_exists('enableAuto', $response)) {
+            return $response['enableAuto'];
+        }
+        throw new Exception("Unable to get under-bed lighting status: " . print_r($response, true));
     }
 
     /**
@@ -1124,7 +1354,8 @@ class SleepyqPHP
     }
 
     /**
-     * {'data': {'boardIsASingle': False,
+     * @return {
+     * 'boardIsASingle': False,
      * 'easternKing': False,
      * 'hasFootControl': True,
      * 'hasFootWarming': True,
@@ -1134,7 +1365,21 @@ class SleepyqPHP
      * 'rightUnderbedLightPMW': 1,
      * 'single': False,
      * 'splitHead': False,
-     * 'splitKing': True}}
+     * 'splitKing': True,
+     * 'data': {
+     *      'boardIsASingle': False,
+     *      'easternKing': False,
+     *      'hasFootControl': True,
+     *      'hasFootWarming': True,
+     *      'hasMassageAndLight': False,
+     *      'hasUnderbedLight': True,
+     *      'leftUnderbedLightPMW': 100,
+     *      'rightUnderbedLightPMW': 1,
+     *      'single': False,
+     *      'splitHead': False,
+     *      'splitKing': True
+     *   }
+     * }
      */
     public function getFoundationFeatures($bedId = '')
     {
@@ -1189,6 +1434,13 @@ class SleepyqPHP
 
     /**
      * Get current bed presets by side
+     * @return [
+     *      <side>' => [
+     *          'side' => 'left'
+     *          'preset' => 1
+     *          'bed_id' => '<bed_id>'
+     *      ]
+     * ]
      */
     public function getBedSidePresets(string $bedId = '')
     {
@@ -1236,6 +1488,18 @@ class SleepyqPHP
 
     /**
      * Get current bed side statuses
+     * @return [
+     *   '<bedId>' => [
+     *      '<side>' => [
+     *         'alertDetailedMessage': 'No Alert',
+     *         'alertId': 0,
+     *         'isInBed': False,
+     *         'lastLink': '00:00:00',
+     *         'pressure': 3144,
+     *         'sleepNumber': 75
+     *      ]
+     *   ]
+     * ]
      */
     public function getBedSidesStatuses()
     {
