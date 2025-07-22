@@ -148,9 +148,10 @@ try {
 
         // // Test 4: Set brightness and check foundation features
         // logMessage("");
-        // logMessage("4. Testing setLightBrightness()...");
-        // $brightnessResult = $sleepyq->setLightBrightness(SleepyqPHP::LIGHT_BRIGHTNESS_MEDIUM, $bedId);
-        // logMessage("Set brightness (MEDIUM=" . SleepyqPHP::LIGHT_BRIGHTNESS_MEDIUM . ") result: " . json_encode($brightnessResult));
+        // $brightness = SleepyqPHP::LIGHT_BRIGHTNESS_HIGH;
+        // logMessage("4. Testing setLightBrightness($brightness)...");
+        // $brightnessResult = $sleepyq->setLightBrightness($brightness, $bedId);
+        // logMessage("Set brightness ($brightness) result: " . json_encode($brightnessResult));
 
         // // Get foundation features again to check PWM values
         // logMessage("Checking foundation features after brightness change...");

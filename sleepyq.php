@@ -191,7 +191,7 @@ class FoundationFeatures extends APIObject
     public $hasMassageAndLight = null;
     public $hasUnderbedLight = null;
     public $leftUnderbedLightPMW = null;
-    public $rightUnderbedLightPMW = null;
+    public $rightUnderbedLightPMW = null; // This one actually reflects changes
     public $single = null;
     public $splitHead = null;
     public $splitKing = null;
@@ -232,7 +232,7 @@ class SleepyqPHP
         self::LIGHT_SETTINGS_ON,
     ];
 
-    // Associated with fsLeftUnderbedLightPWM and fsRightUnderbedLightPWM
+    // Associated with fsRightUnderbedLightPWM (and the left, but left doesn't update)
     const LIGHT_BRIGHTNESS_OFF = 0;
     const LIGHT_BRIGHTNESS_LOW = 1;
     const LIGHT_BRIGHTNESS_MEDIUM = 30;
@@ -1122,8 +1122,8 @@ class SleepyqPHP
         if (in_array($brightness, self::LIGHT_BRIGHTNESS)) {
             $data = [
                 // Keys don't match what is returned, but this is what the API expects
+                'rightUnderbedLightPWM' => $brightness, // Only this key reflects changes
                 'leftUnderbedLightPWM' => $brightness,
-                'rightUnderbedLightPWM' => $brightness,
             ];
             $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/system', "PUT", $data);
             return $response;
@@ -1136,7 +1136,7 @@ class SleepyqPHP
      * Same light numbering as set_light
      * @param $light Optional. 1-4. Defaults to RIGHT_NIGHT_LIGHT
      * @param $bedId Optional. If not provided, the default bed will be used.
-     * @return array
+     * @return Status
      * {'data': {'bedId': '<bed_id>',
      * 'outlet': 3, // Must be 3 for RIGHT_NIGHT_LIGHT
      * 'setting': 0, // On (1) or Off (0)
@@ -1376,7 +1376,8 @@ class SleepyqPHP
      * 'fsBoardHWRevisionCode': 21,
      * 'fsBoardStatus': 0,
      * 'fsLeftUnderbedLightPWM': 100,
-     * 'fsRightUnderbedLightPWM': 1}}
+     * 'fsRightUnderbedLightPWM': 1 // Only use this key (not left)
+     * }}
      */
     public function getFoundationSystem($bedId = '')
     {
@@ -1393,7 +1394,7 @@ class SleepyqPHP
      * 'hasMassageAndLight': False,
      * 'hasUnderbedLight': True,
      * 'leftUnderbedLightPMW': 100,
-     * 'rightUnderbedLightPMW': 1,
+     * 'rightUnderbedLightPMW': 1, // Only use this key (not left)
      * 'single': False,
      * 'splitHead': False,
      * 'splitKing': True,
@@ -1405,7 +1406,7 @@ class SleepyqPHP
      *      'hasMassageAndLight': False,
      *      'hasUnderbedLight': True,
      *      'leftUnderbedLightPMW': 100,
-     *      'rightUnderbedLightPMW': 1,
+     *      'rightUnderbedLightPMW': 1, // Only use this key (not left)
      *      'single': False,
      *      'splitHead': False,
      *      'splitKing': True
@@ -1429,7 +1430,7 @@ class SleepyqPHP
             'hasFootWarming' => $this->__featureCheck($fsBoardFeatures, 3),
             'hasUnderbedLight' => $this->__featureCheck($fsBoardFeatures, 4),
             'leftUnderbedLightPMW' => $fs->fsLeftUnderbedLightPWM ?: false,
-            'rightUnderbedLightPMW' => $fs->fsRightUnderbedLightPWM ?: false,
+            'rightUnderbedLightPMW' => $fs->fsRightUnderbedLightPWM ?: false, // Only use this key (not left)
         ];
 
         if ($feature['hasMassageAndLight']) {

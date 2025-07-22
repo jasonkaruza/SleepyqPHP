@@ -14,5 +14,5 @@ PHP SDK for SleepNumber API, adapted from technicalpickles sleepyq (thank you :p
 ## Notes and Learnings
 - Setting underbed lights requires:
   - Setting Auto separate from On/Off for the setting
-  - Setting brightness as part of the foundation for fields fsLeftUnderbedLightPWM and fsRightUNderbedLightPWM
+  - Setting brightness as part of the foundation for fields fsRightUNderbedLightPWM (left doesn't change for me)
   - Setting On/Off with Timer separate from the above
