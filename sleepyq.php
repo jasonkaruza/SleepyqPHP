@@ -212,9 +212,10 @@ class SleepyqPHP
     private $_api;
     private $_cookieFile;
 
+    // Underbed lights are bed-wide. Not per side.
     const RIGHT_NIGHT_STAND = 1;
     const LEFT_NIGHT_STAND = 2;
-    const RIGHT_NIGHT_LIGHT = 3; // Active/working for me
+    const RIGHT_NIGHT_LIGHT = 3; // Active/working for me/Only working option
     const LEFT_NIGHT_LIGHT = 4;
 
     const BED_LIGHTS = [
@@ -231,6 +232,7 @@ class SleepyqPHP
         self::LIGHT_SETTINGS_ON,
     ];
 
+    // Associated with fsLeftUnderbedLightPWM and fsRightUnderbedLightPWM
     const LIGHT_BRIGHTNESS_OFF = 0;
     const LIGHT_BRIGHTNESS_LOW = 1;
     const LIGHT_BRIGHTNESS_MEDIUM = 30;
@@ -1083,15 +1085,19 @@ class SleepyqPHP
 
     /**
      * https://github.com/danpenn/SleepIQ/blob/1531466e2b64/control.go#L233
-     * @param $light 1-4 based on self::BED_LIGHTS (for me, setting). Only 3 (RIGHT_NIGHT_LIGHT) works
      * @param $setting 0=off, 1=on (from LIGHT_SETTING). Auto needs to be set with enableOrDisableUnderBedLighting().
+     * @param $light Optional. Only 3 (RIGHT_NIGHT_LIGHT) works, so this is the default. 1-4 based on self::BED_LIGHTS (for me, setting).
      * @param $timer Optional. Defaults to null (no timer). Only applicable for mode 1 (on). Can only be intervals defined via LIGHT_TIMER (or between 0 and 180)
      * @param $bedId Optional
+     * @return array
      */
-    public function setLight($light, $setting, $timer = null, $bedId = '')
+    public function setLightSettingAndTimer($setting, $light = self::RIGHT_NIGHT_LIGHT, $timer = null, $bedId = '')
     {
         if (in_array($light, self::BED_LIGHTS)) {
-            $data = ['outletId' => $light, 'setting' => $setting ? 1 : 0];
+            $data = [
+                'outletId' => $light,
+                'setting' => $setting ? 1 : 0
+            ];
             if ($timer !== null) {
                 if (!in_array($timer, self::LIGHT_TIMER)) {
                     throw new Exception("Invalid timer duration");
@@ -1106,14 +1112,38 @@ class SleepyqPHP
     }
 
     /**
-     * Same light numbering as set_light
-     * RIGHT_NIGHT_LIGHT
-     * {'data': {'bedId': '<bed_id>',
-     * 'outlet': 3,
-     * 'setting': 0,
-     * 'timer': None}}
+     * https://github.com/danpenn/SleepIQ/blob/1531466e2b64/control.go#L233
+     * @param $brightness Optional. Defaults to LIGHT_BRIGHTNESS_OFF. Should be a value from self::LIGHT_BRIGHTNESS.
+     * @param $bedId Optional
+     * @return array
      */
-    public function getLight($light, $bedId = '')
+    public function setLightBrightness($brightness = self::LIGHT_BRIGHTNESS_OFF, $bedId = '')
+    {
+        if (in_array($brightness, self::LIGHT_BRIGHTNESS)) {
+            $data = [
+                // Keys don't match what is returned, but this is what the API expects
+                'leftUnderbedLightPWM' => $brightness,
+                'rightUnderbedLightPWM' => $brightness,
+            ];
+            $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/system', "PUT", $data);
+            return $response;
+        } else {
+            throw new Exception("Invalid light");
+        }
+    }
+
+    /**
+     * Same light numbering as set_light
+     * @param $light Optional. 1-4. Defaults to RIGHT_NIGHT_LIGHT
+     * @param $bedId Optional. If not provided, the default bed will be used.
+     * @return array
+     * {'data': {'bedId': '<bed_id>',
+     * 'outlet': 3, // Must be 3 for RIGHT_NIGHT_LIGHT
+     * 'setting': 0, // On (1) or Off (0)
+     * 'timer': None // 0-180
+     * }}
+     */
+    public function getLight($light = self::RIGHT_NIGHT_LIGHT, $bedId = '')
     {
         if (in_array($light, self::BED_LIGHTS)) {
             $this->_session_params['outletId'] = $light; // Must be added to the GET querystring
@@ -1130,6 +1160,7 @@ class SleepyqPHP
      * https://github.com/danpenn/SleepIQ/blob/1531466e2b64/control.go#L323
      * @param $enable true to enable, false to disable
      * @param $bedId Optional. If not provided, the default bed will be used.
+     * @return array
      */
     public function enableOrDisableUnderBedLighting($enable, $bedId = '')
     {
