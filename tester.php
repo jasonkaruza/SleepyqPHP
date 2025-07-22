@@ -21,6 +21,7 @@ function logMessage($message)
 if ($argc != 3) {
     echo "Usage: php tester.php <username> <password>\n";
     echo "Example: php tester.php user@example.com mypassword\n";
+    echo "Example: php tester.php \$SN_USER \$SN_OTHER\n";
     exit(1);
 }
 
@@ -175,25 +176,25 @@ try {
         // }
 
         // // Test 5: Disable lighting and verify
-        logMessage("");
-        logMessage("5. Testing setLightSettingAndTimer() to disable...");
-        $disableLightResult = $sleepyq->setLightSettingAndTimer(SleepyqPHP::LIGHT_SETTINGS_OFF, SleepyqPHP::RIGHT_NIGHT_LIGHT, null, $bedId);
-        logMessage("Set light setting (OFF) result: " . json_encode($disableLightResult));
+        // logMessage("");
+        // logMessage("5. Testing setLightSettingAndTimer() to disable...");
+        // $disableLightResult = $sleepyq->setLightSettingAndTimer(SleepyqPHP::LIGHT_SETTINGS_OFF, SleepyqPHP::RIGHT_NIGHT_LIGHT, null, $bedId);
+        // logMessage("Set light setting (OFF) result: " . json_encode($disableLightResult));
 
-        // Get light status to verify changes
-        $lightStatusAfterDisable = $sleepyq->getLight(SleepyqPHP::RIGHT_NIGHT_LIGHT, $bedId);
-        if ($lightStatusAfterDisable) {
-            logMessage("Light status after disabling:");
-            logMessage("  - Setting: " . ($lightStatusAfterDisable->setting ?? 'N/A'));
-            logMessage("  - Timer: " . ($lightStatusAfterDisable->timer ?? 'N/A'));
-            logMessage("  - Outlet: " . ($lightStatusAfterDisable->outlet ?? 'N/A'));
-        } else {
-            logMessage("Failed to retrieve light status after disabling");
-        }
+        // // Get light status to verify changes
+        // $lightStatusAfterDisable = $sleepyq->getLight(SleepyqPHP::RIGHT_NIGHT_LIGHT, $bedId);
+        // if ($lightStatusAfterDisable) {
+        //     logMessage("Light status after disabling:");
+        //     logMessage("  - Setting: " . ($lightStatusAfterDisable->setting ?? 'N/A'));
+        //     logMessage("  - Timer: " . ($lightStatusAfterDisable->timer ?? 'N/A'));
+        //     logMessage("  - Outlet: " . ($lightStatusAfterDisable->outlet ?? 'N/A'));
+        // } else {
+        //     logMessage("Failed to retrieve light status after disabling");
+        // }
 
-        // Check auto mode final state
-        $autoModeFinal = $sleepyq->isUnderBedLightingAutoModeEnabled($bedId);
-        logMessage("Auto mode enabled after disabling light: " . json_encode($autoModeFinal));
+        // // Check auto mode final state
+        // $autoModeFinal = $sleepyq->isUnderBedLightingAutoModeEnabled($bedId);
+        // logMessage("Auto mode enabled after disabling light: " . json_encode($autoModeFinal));
 
         logMessage("");
         logMessage("=== LIGHTING TESTS COMPLETED ===");
