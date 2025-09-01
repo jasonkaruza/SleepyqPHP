@@ -114,6 +114,35 @@ try {
             logMessage("Failed to retrieve foundation features");
         }
 
+        // Sleep number favorite read
+        $faves = $sleepyq->getFavSleepnumber($bedId);
+        logMessage("Favorite Sleep Numbers: L=" . ($faves->left ?? 'n/a') . " R=" . ($faves->right ?? 'n/a'));
+        // Set a temporary favorite (no-op if same)
+        $targetFav = (($faves->left ?? 40) + 5) % 100;
+        logMessage("Setting left favorite to $targetFav (temporary)");
+        $sleepyq->setFavSleepnumber('left', $targetFav, $bedId);
+        // Foot warming presence
+        $fw = $sleepyq->getFoundationFootwarming($bedId);
+        if ($fw) {
+            $leftFW = $fw->footWarmingStatusLeft ?? 'n/a';
+            $rightFW = $fw->footWarmingStatusRight ?? 'n/a';
+            logMessage("Footwarming temps: L=$leftFW R=$rightFW");
+        }
+        // Underbed light state
+        try {
+            $lightStatus = $sleepyq->getLight(SleepyqPHP::RIGHT_NIGHT_LIGHT, $bedId);
+            logMessage("Underbed light setting=" . ($lightStatus->setting ?? 'n/a') . " timer=" . ($lightStatus->timer ?? 'n/a'));
+            $status = $sleepyq->isUnderBedLightingAutoModeEnabled($bedId);
+            logMessage("Underbed light auto mode status: " . ($status ? 'Enabled' : 'Disabled'));
+        } catch (Exception $e) {
+            logMessage("Underbed light retrieval failed: " . $e->getMessage());
+        }
+        // Presets
+        $presets = $sleepyq->getBedSidePresets($bedId);
+        foreach ($presets as $side => $info) {
+            logMessage("Preset for $side: " . json_encode($info));
+        }
+
         // Test 2: Enable underbed lighting and check auto mode
         // logMessage("");
         // logMessage("2. Testing enableOrDisableUnderBedLighting(true)...");
@@ -199,6 +228,47 @@ try {
 
         logMessage("");
         logMessage("=== LIGHTING TESTS COMPLETED ===");
+
+        // Optional Fuzion tests (guarded by env var)
+        if (getenv('SLEEPYQ_TEST_FUZION') === '1') {
+            logMessage("");
+            logMessage("=== FUZION (bamkey) FEATURE TESTS ===");
+            // Detect if this is a Fuzion bed
+            $generation = $beds[0]->generation ?? '';
+            logMessage("Bed generation: $generation");
+            if (strtolower($generation) === 'fuzion') {
+                // Sleep number favorite read
+                $faves = $sleepyq->getFavSleepnumber($bedId);
+                logMessage("Favorite Sleep Numbers: L=" . ($faves->left ?? 'n/a') . " R=" . ($faves->right ?? 'n/a'));
+                // Set a temporary favorite (no-op if same)
+                $targetFav = (($faves->left ?? 40) + 5) % 100;
+                logMessage("Setting left favorite to $targetFav (temporary)");
+                $sleepyq->setFavSleepnumber('left', $targetFav, $bedId);
+                // Foot warming presence
+                $fw = $sleepyq->getFoundationFootwarming($bedId);
+                if ($fw) {
+                    $leftFW = $fw->footWarmingStatusLeft ?? 'n/a';
+                    $rightFW = $fw->footWarmingStatusRight ?? 'n/a';
+                    logMessage("Footwarming temps: L=$leftFW R=$rightFW");
+                }
+                // Underbed light state
+                try {
+                    $lightStatus = $sleepyq->getLight(SleepyqPHP::RIGHT_NIGHT_LIGHT, $bedId);
+                    logMessage("Underbed light setting=" . ($lightStatus->setting ?? 'n/a') . " timer=" . ($lightStatus->timer ?? 'n/a'));
+                    $status = $sleepyq->isUnderBedLightingAutoModeEnabled($bedId);
+                } catch (Exception $e) {
+                    logMessage("Underbed light retrieval failed: " . $e->getMessage());
+                }
+                // Presets
+                $presets = $sleepyq->getBedSidePresets($bedId);
+                foreach ($presets as $side => $info) {
+                    logMessage("Preset for $side: " . json_encode($info));
+                }
+            } else {
+                logMessage("Bed is not Fuzion; skipping Fuzion tests");
+            }
+            logMessage("=== FUZION (bamkey) FEATURE TESTS COMPLETED ===");
+        }
     } else {
         logMessage("");
         logMessage("No beds available for lighting tests");

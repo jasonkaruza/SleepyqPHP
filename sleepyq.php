@@ -108,8 +108,12 @@ class FamilyStatus extends APIObject
     {
         parent::__construct($data);
         $this->bed = null;
-        $this->left = new SideStatus($data['leftSide']);
-        $this->right = new SideStatus($data['rightSide']);
+        if ($data['leftSide']) {
+            $this->left = new SideStatus($data['leftSide']);
+        }
+        if ($data['rightSide']) {
+            $this->right = new SideStatus($data['rightSide']);
+        }
     }
 }
 
@@ -211,6 +215,11 @@ class SleepyqPHP
     private $_base_api = "prod-api.sleepiq.sleepnumber.com";
     private $_api;
     private $_cookieFile;
+    // Fuzion support caches
+    private $_accountId = null; // For bamkey path
+    private $_bedGenerations = []; // bedId => generation
+    private $_fuzionFeatureCache = []; // bedId => parsed features
+    private $_fuzionLightState = []; // bedId => ['state'=>word,'timer'=>int]
 
     // Underbed lights are bed-wide. Not per side.
     const RIGHT_NIGHT_STAND = 1;
@@ -345,6 +354,174 @@ class SleepyqPHP
             $randomString .= $characters[random_int(0, $charactersLength - 1)];
         }
         return $randomString;
+    }
+
+    // Subset of BAMKEY commands required for existing feature parity
+    const BAMKEY = [
+        'HaltAllActuators' => 'ACHA',
+        'GetSystemConfiguration' => 'SYCG',
+        'InterruptSleepNumberAdjustment' => 'PSNI',
+        'StartSleepNumberAdjustment' => 'PSNS',
+        'GetSleepNumberControls' => 'SNCG',
+        'SetFavoriteSleepNumber' => 'SNFS',
+        'GetFavoriteSleepNumber' => 'SNFG',
+        'SetUnderbedLightSettings' => 'UBLS',
+        'GetUnderbedLightSettings' => 'UBLG',
+        // Added for auto underbed lighting support
+        'SetUnderbedLightAutoSettings' => 'UBAS',
+        'GetUnderbedLightAutoSettings' => 'UBAG',
+        'GetActuatorPosition' => 'ACTG',
+        'SetActuatorTargetPosition' => 'ACTS',
+        'SetTargetPresetWithoutTimer' => 'ASTP',
+        'GetCurrentPreset' => 'AGCP',
+        'GetFootwarmingPresence' => 'FWPG',
+        'SetFootwarmingSettings' => 'FWTS',
+        'GetFootwarmingSettings' => 'FWTG',
+        // Future Fuzion features (not yet fully implemented here)
+        'SetResponsiveAirState' => 'LRAS',
+        'GetResponsiveAirState' => 'LRAG',
+        'SetSleepiqPrivacyState' => 'SPRS',
+        'GetSleepiqPrivacyState' => 'SPRG',
+        'SetHeidiMode' => 'THMS',
+        'GetHeidiMode' => 'THMG',
+        'GetHeidiPresence' => 'THPG',
+    ];
+
+    private function isFuzionBed($bedId)
+    {
+        return isset($this->_bedGenerations[$bedId]) && strtolower($this->_bedGenerations[$bedId]) === 'fuzion';
+    }
+
+    private function ensureAccountId()
+    {
+        if ($this->_accountId) return;
+        $beds = $this->beds();
+        if (!$this->_accountId && count($beds)) {
+            $this->_accountId = $beds[0]->accountId ?? null;
+        }
+    }
+
+    private function __bamkey($bedId, $command, array $args = [])
+    {
+        $this->ensureAccountId();
+        if (!$this->_accountId) throw new Exception("Missing accountId for bamkey");
+        if (!array_key_exists($command, self::BAMKEY)) throw new Exception("Unsupported bamkey command $command");
+        $body = [
+            'args' => implode(' ', $args),
+            'key' => self::BAMKEY[$command],
+            'sourceApplication' => 'SleepyqPHP'
+        ];
+        $path = '/sn/v1/accounts/' . $this->_accountId . '/beds/' . $bedId . '/bamkey';
+        $resp = $this->__makeRequest($path, 'PUT', $body);
+        if (!is_array($resp) || !isset($resp['cdcResponse'])) throw new Exception("Bamkey command $path failed: $command\n" . print_r($resp, true));
+        $val = $resp['cdcResponse'];
+        if (strpos($val, 'PASS:') === 0) $val = substr($val, 5);
+        return $val;
+    }
+
+    private function normalizeSideShort($side)
+    {
+        $s = strtolower($side);
+        if ($s === 'left' || $s === 'l') return 'L';
+        if ($s === 'right' || $s === 'r') return 'R';
+        throw new Exception("Invalid side: $side");
+    }
+    private function normalizeSideFullLower($side)
+    {
+        $s = strtolower($side);
+        if ($s === 'left' || $s === 'l') return 'left';
+        if ($s === 'right' || $s === 'r') return 'right';
+        throw new Exception("Invalid side: $side");
+    }
+
+    private function fuzionPresetNumericToWord($preset)
+    {
+        $map = [
+            self::FAVORITE => 'favorite',
+            self::READ => 'read',
+            self::WATCH_TV => 'watch_tv',
+            self::FLAT => 'flat',
+            self::ZERO_G => 'zero_g',
+            self::SNORE => 'snore',
+        ];
+        return $map[intval($preset)] ?? null;
+    }
+    private function fuzionPresetWordToNumeric($word)
+    {
+        $rev = [
+            'favorite' => self::FAVORITE,
+            'read' => self::READ,
+            'watch_tv' => self::WATCH_TV,
+            'flat' => self::FLAT,
+            'zero_g' => self::ZERO_G,
+            'snore' => self::SNORE,
+            'not at preset' => 0,
+        ];
+        return $rev[strtolower($word)] ?? null;
+    }
+
+    private function fuzionFootwarmTempWordToValue($word)
+    {
+        $rev = [
+            'off' => self::FOOTWARM_OFF,
+            'low' => self::FOOTWARM_LOW,
+            'medium' => self::FOOTWARM_MEDIUM,
+            'high' => self::FOOTWARM_HIGH,
+        ];
+        return $rev[strtolower($word)] ?? self::FOOTWARM_OFF;
+    }
+    private function fuzionFootwarmValueToWord($val)
+    {
+        $map = [
+            self::FOOTWARM_OFF => 'off',
+            self::FOOTWARM_LOW => 'low',
+            self::FOOTWARM_MEDIUM => 'medium',
+            self::FOOTWARM_HIGH => 'high',
+        ];
+        return $map[intval($val)] ?? 'off';
+    }
+
+    private function fuzionBrightnessValueToWord($val)
+    {
+        if ($val <= self::LIGHT_BRIGHTNESS_OFF) return 'off';
+        if ($val <= self::LIGHT_BRIGHTNESS_LOW) return 'low';
+        if ($val <= self::LIGHT_BRIGHTNESS_MEDIUM) return 'medium';
+        return 'high';
+    }
+    private function fuzionBrightnessWordToPwm($word)
+    {
+        $w = strtolower($word);
+        if ($w === 'off') return self::LIGHT_BRIGHTNESS_OFF;
+        if ($w === 'low') return self::LIGHT_BRIGHTNESS_LOW;
+        if ($w === 'medium') return self::LIGHT_BRIGHTNESS_MEDIUM;
+        if ($w === 'high') return self::LIGHT_BRIGHTNESS_HIGH;
+        return self::LIGHT_BRIGHTNESS_OFF;
+    }
+
+    private function fuzionParseSystemConfiguration($string)
+    {
+        $tokens = preg_split('/\s+/', trim($string));
+        $flags = [
+            'underbedLightEnableFlag' => false,
+            'articulationEnableFlag' => false,
+            'thermalControlEnabledFlag' => false,
+        ];
+        if (isset($tokens[2])) $flags['articulationEnableFlag'] = ($tokens[2] === 'yes');
+        if (isset($tokens[3])) $flags['underbedLightEnableFlag'] = ($tokens[3] === 'yes');
+        if (isset($tokens[5])) $flags['thermalControlEnabledFlag'] = ($tokens[5] === 'yes');
+        return [
+            'single' => false,
+            'splitHead' => false,
+            'splitKing' => false,
+            'easternKing' => false,
+            'boardIsASingle' => false,
+            'hasMassageAndLight' => $flags['articulationEnableFlag'],
+            'hasFootControl' => $flags['articulationEnableFlag'],
+            'hasFootWarming' => $flags['thermalControlEnabledFlag'],
+            'hasUnderbedLight' => $flags['underbedLightEnableFlag'],
+            'leftUnderbedLightPMW' => 0,
+            'rightUnderbedLightPMW' => 0,
+        ];
     }
 
     public function __construct($login, $password)
@@ -673,6 +850,12 @@ class SleepyqPHP
         $beds = [];
         foreach ($response['beds'] as $bed) {
             $bed = new Bed($bed);
+            if ($bed->bedId) {
+                $this->_bedGenerations[$bed->bedId] = $bed->generation ?? '';
+            }
+            if (!$this->_accountId && isset($bed->accountId)) {
+                $this->_accountId = $bed->accountId;
+            }
             if ($withFoundationFeatures) {
                 $bed->foundationFeatures = $this->getFoundationFeatures($bed->bedId);
             }
@@ -869,7 +1052,7 @@ class SleepyqPHP
             foreach (['left', 'right'] as $side) {
                 $sleeperKey = 'sleeper' . ucfirst($side) . 'Id'; // Dynamically created
                 $sleeperId = $bed->$sleeperKey; // Dynamically accessed
-                if ($sleeperId == "0") {
+                if ($sleeperId == "0" || $familyStatus->$side == null) {
                     continue;
                 }
                 $sleeper = $sleepersById[$sleeperId];
@@ -895,11 +1078,45 @@ class SleepyqPHP
      */
     public function getFoundationFootwarming($bedId = '')
     {
-        $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/footwarming');
+        $bedId = $this->defaultBedId($bedId);
+        // Fuzion path (bamkey)
+        if ($this->isFuzionBed($bedId)) {
+            // Provide legacy-parity baseline structure (zeros) even if presence is false
+            $resp = [
+                'footWarmingStatusLeft' => 0,
+                'footWarmingStatusRight' => 0,
+                'footWarmingTimerLeft' => 0,
+                'footWarmingTimerRight' => 0,
+                'sides' => [
+                    'left' => ['temp' => 0, 'time' => 0],
+                    'right' => ['temp' => 0, 'time' => 0],
+                ],
+            ];
+            foreach (self::SIDES_NAMES as $side) {
+                try {
+                    $present = $this->__bamkey($bedId, 'GetFootwarmingPresence', [$side]);
+                    if ($present === '1') {
+                        $data = $this->__bamkey($bedId, 'GetFootwarmingSettings', [$side]);
+                        $parts = preg_split('/\s+/', trim($data));
+                        $stateWord = strtolower($parts[0] ?? 'off');
+                        $timeVal = intval($parts[1] ?? 0);
+                        $tempVal = $this->fuzionFootwarmTempWordToValue($stateWord);
+                        $uc = ucfirst($side);
+                        $resp['footWarmingStatus' . $uc] = $tempVal;
+                        $resp['footWarmingTimer' . $uc] = $timeVal;
+                        $resp['sides'][$side] = ['temp' => $tempVal, 'time' => $timeVal];
+                    }
+                } catch (Exception $e) {
+                    // ignore side errors; retain baseline zeros
+                }
+            }
+            return new FootwarmingStatus($resp);
+        }
+        // Legacy 360 path
+        $response = $this->__makeRequest('/bed/' . $bedId . '/foundation/footwarming');
         try {
             foreach (self::SIDES_NAMES as $side) {
                 $ucSide = ucfirst($side);
-
                 if (array_key_exists("footWarmingStatus$ucSide", $response)) {
                     $response['sides'][$side] = [
                         'temp' => $response["footWarmingStatus$ucSide"],
@@ -907,11 +1124,10 @@ class SleepyqPHP
                     ];
                 }
             }
-            $result = new FootwarmingStatus($response);
+            return new FootwarmingStatus($response);
         } catch (Exception $e) {
-            $result = null;
+            return null;
         }
-        return $result;
     }
 
     /**
@@ -944,8 +1160,17 @@ class SleepyqPHP
             throw new Exception("Invalid footwarming timer duration");
         }
 
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            // side is already Left/Right
+            $sideFullLower = strtolower($side);
+            $sideWord = ($sideFullLower === 'right') ? 'right' : 'left';
+            $word = $this->fuzionFootwarmValueToWord($temp);
+            $this->__bamkey($bedId, 'SetFootwarmingSettings', [$sideWord, $word, (string)intval($timer)]);
+            return true;
+        }
         $data = ['footWarmingTemp' . $side => $temp, 'footWarmingTimer' . $side => $timer];
-        $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/footwarming', "PUT", $data);
+        $this->__makeRequest('/bed/' . $bedId . '/foundation/footwarming', "PUT", $data);
         return true;
     }
 
@@ -1093,22 +1318,33 @@ class SleepyqPHP
      */
     public function setLightSettingAndTimer($setting, $light = self::RIGHT_NIGHT_LIGHT, $timer = null, $bedId = '')
     {
-        if (in_array($light, self::BED_LIGHTS)) {
-            $data = [
-                'outletId' => $light,
-                'setting' => $setting ? 1 : 0
-            ];
-            if ($timer !== null) {
-                if (!in_array($timer, self::LIGHT_TIMER)) {
-                    throw new Exception("Invalid timer duration");
-                }
-                $data['timer'] = $timer;
-            }
-            $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/outlet', "PUT", $data);
-            return $response;
-        } else {
+        if (!in_array($light, self::BED_LIGHTS)) {
             throw new Exception("Invalid light");
         }
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            // For Fuzion we map setting (0/1) to brightness off/high unless brightness explicitly set elsewhere
+            $brightnessWord = $setting ? 'high' : 'off';
+            $duration = $timer !== null ? intval($timer) : 0; // seconds/mins? Keep minutes as provided
+            if ($timer !== null && !in_array($timer, self::LIGHT_TIMER)) {
+                // For Fuzion allow raw minute values 0-180 else throw
+                if ($duration < 0 || $duration > 180) throw new Exception("Invalid timer duration");
+            }
+            $this->__bamkey($bedId, 'SetUnderbedLightSettings', [$brightnessWord, (string)$duration]);
+            $this->_fuzionLightState[$bedId] = ['state' => $brightnessWord, 'timer' => $duration];
+            return ['success' => true];
+        }
+        $data = [
+            'outletId' => $light,
+            'setting' => $setting ? 1 : 0
+        ];
+        if ($timer !== null) {
+            if (!in_array($timer, self::LIGHT_TIMER)) {
+                throw new Exception("Invalid timer duration");
+            }
+            $data['timer'] = $timer;
+        }
+        return $this->__makeRequest('/bed/' . $bedId . '/foundation/outlet', "PUT", $data);
     }
 
     /**
@@ -1119,17 +1355,21 @@ class SleepyqPHP
      */
     public function setLightBrightness($brightness = self::LIGHT_BRIGHTNESS_OFF, $bedId = '')
     {
-        if (in_array($brightness, self::LIGHT_BRIGHTNESS)) {
-            $data = [
-                // Keys don't match what is returned, but this is what the API expects
-                'rightUnderbedLightPWM' => $brightness, // Only this key reflects changes
-                'leftUnderbedLightPWM' => $brightness,
-            ];
-            $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/system', "PUT", $data);
-            return $response;
-        } else {
+        if (!in_array($brightness, self::LIGHT_BRIGHTNESS)) {
             throw new Exception("Invalid light");
         }
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            $word = $this->fuzionBrightnessValueToWord($brightness);
+            $this->__bamkey($bedId, 'SetUnderbedLightSettings', [$word, '0']);
+            $this->_fuzionLightState[$bedId] = ['state' => $word, 'timer' => 0];
+            return ['state' => $word];
+        }
+        $data = [
+            'rightUnderbedLightPWM' => $brightness, // Only this key reflects changes
+            'leftUnderbedLightPWM' => $brightness,
+        ];
+        return $this->__makeRequest('/bed/' . $bedId . '/foundation/system', "PUT", $data);
     }
 
     /**
@@ -1145,14 +1385,44 @@ class SleepyqPHP
      */
     public function getLight($light = self::RIGHT_NIGHT_LIGHT, $bedId = '')
     {
-        if (in_array($light, self::BED_LIGHTS)) {
-            $this->_session_params['outletId'] = $light; // Must be added to the GET querystring
-            $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/outlet');
-            unset($this->_session_params['outletId']);
-            return new Status($response);
-        } else {
+        if (!in_array($light, self::BED_LIGHTS)) {
             throw new Exception("Invalid light");
         }
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            // Retrieve manual light state (brightness + timer)
+            $manualVal = $this->__bamkey($bedId, 'GetUnderbedLightSettings');
+            $manualParts = preg_split('/\s+/', trim($manualVal));
+            $manualState = strtolower($manualParts[0] ?? 'off');
+            $manualTimer = isset($manualParts[1]) ? intval($manualParts[1]) : 0;
+            // Retrieve auto configuration to determine if auto is enabled
+            $autoVal = $this->__bamkey($bedId, 'GetUnderbedLightAutoSettings');
+            $autoParts = preg_split('/\s+/', trim($autoVal));
+            $autoEnabled = isset($autoParts[0]) ? ($autoParts[0] === 'true') : false;
+            $autoBrightnessWord = isset($autoParts[1]) ? strtolower($autoParts[1]) : 'off';
+            // Effective visible state mirrors legacy semantics:
+            // If auto enabled -> treat as setting=1 (on) with timer preserved as 'Not set' (legacy shows timer only for manual mode)
+            $effectiveStateWord = $autoEnabled ? 'auto' : $manualState;
+            $effectiveTimer = $autoEnabled ? 0 : $manualTimer; // 0/Not set semantics
+            $this->_fuzionLightState[$bedId] = ['state' => $effectiveStateWord, 'timer' => $effectiveTimer, 'auto' => $autoEnabled, 'autoBrightness' => $autoBrightnessWord];
+            $core = array(
+                'bedId' => $bedId,
+                'outlet' => 3,
+                'setting' => ($effectiveStateWord !== 'off') ? 1 : 0,
+                'timer' => $effectiveTimer,
+                // Add parity field to emulate legacy auto flag field name
+                'enableAuto' => $autoEnabled,
+            );
+            $synthetic = array('data' => $core);
+            foreach ($core as $k => $v) {
+                $synthetic[$k] = $v;
+            }
+            return new Status($synthetic);
+        }
+        $this->_session_params['outletId'] = $light; // Must be added to the GET querystring
+        $response = $this->__makeRequest('/bed/' . $bedId . '/foundation/outlet');
+        unset($this->_session_params['outletId']);
+        return new Status($response);
     }
 
     /**
@@ -1164,11 +1434,29 @@ class SleepyqPHP
      */
     public function enableOrDisableUnderBedLighting($enable, $bedId = '')
     {
-        $data = [
-            'enableAuto' => $enable,
-        ];
-        $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/underbedLight', "PUT", $data);
-        return $response;
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            // Fuzion: Auto settings controlled via bamkey SetUnderbedLightAutoSettings
+            // When enabling auto, first turn manual light off to mimic app behavior
+            if ($enable) {
+                $this->__bamkey($bedId, 'SetUnderbedLightSettings', ['off', '0']);
+                // Use previously cached manual brightness if any, else default to 'low' for auto brightness
+                $cached = $this->_fuzionLightState[$bedId]['autoBrightness'] ?? 'low';
+                if (!in_array($cached, ['off', 'low', 'medium', 'high'])) $cached = 'low';
+                $this->__bamkey($bedId, 'SetUnderbedLightAutoSettings', ['true', $cached]);
+                $this->_fuzionLightState[$bedId] = ['state' => 'auto', 'timer' => 0, 'auto' => true, 'autoBrightness' => $cached];
+            } else {
+                // Disable auto -> set auto false and retain last manual timer/brightness (default off)
+                $this->__bamkey($bedId, 'SetUnderbedLightAutoSettings', ['false', 'low']);
+                // Manual state remains whatever prior manual setting was cached; if none, off
+                $prev = $this->_fuzionLightState[$bedId] ?? [];
+                $manualState = isset($prev['state']) && $prev['state'] !== 'auto' ? $prev['state'] : 'off';
+                $this->_fuzionLightState[$bedId] = ['state' => $manualState, 'timer' => 0, 'auto' => false, 'autoBrightness' => 'low'];
+            }
+            return ['success' => true, 'enableAuto' => (bool)$enable];
+        }
+        $data = ['enableAuto' => (bool)$enable];
+        return $this->__makeRequest('/bed/' . $bedId . '/foundation/underbedLight', "PUT", $data);
     }
 
     /**
@@ -1178,9 +1466,25 @@ class SleepyqPHP
      */
     public function isUnderBedLightingAutoModeEnabled($bedId = '')
     {
-        $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/underbedLight');
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            // Query auto settings bamkey
+            $val = $this->__bamkey($bedId, 'GetUnderbedLightAutoSettings');
+            $parts = preg_split('/\s+/', trim($val));
+            $enabled = isset($parts[0]) ? ($parts[0] === 'true') : false;
+            // Cache auto brightness for potential reuse
+            if (!empty($parts[1])) {
+                $autoBrightness = strtolower($parts[1]);
+                $existing = $this->_fuzionLightState[$bedId] ?? [];
+                $existing['autoBrightness'] = $autoBrightness;
+                $existing['auto'] = $enabled;
+                $this->_fuzionLightState[$bedId] = $existing;
+            }
+            return $enabled;
+        }
+        $response = $this->__makeRequest('/bed/' . $bedId . '/foundation/underbedLight');
         if (array_key_exists('enableAuto', $response)) {
-            return $response['enableAuto'];
+            return (bool)$response['enableAuto'];
         }
         throw new Exception("Unable to get under-bed lighting status: " . print_r($response, true));
     }
@@ -1202,8 +1506,15 @@ class SleepyqPHP
         }
 
         if (in_array($preset, self::BED_PRESETS)) {
+            $bedId = $this->defaultBedId($bedId);
+            if ($this->isFuzionBed($bedId)) {
+                $presetWord = $this->fuzionPresetNumericToWord($preset);
+                if ($presetWord === null) throw new Exception('Unsupported preset');
+                $this->__bamkey($bedId, 'SetTargetPresetWithoutTimer', [strtolower($side === 'R' ? 'right' : 'left'), $presetWord]);
+                return true;
+            }
             $data = ['preset' => $preset, 'side' => $side, 'speed' => $slowSpeed ? 1 : 0];
-            $response = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/preset', "PUT", $data);
+            $this->__makeRequest('/bed/' . $bedId . '/foundation/preset', "PUT", $data);
             return true;
         } else {
             throw new Exception("Invalid preset");
@@ -1249,21 +1560,27 @@ class SleepyqPHP
         if ($setting < 0 || $setting > 100) {
             throw new \InvalidArgumentException("Invalid SleepNumber, must be between 0 and 100");
         }
+        $bedId = $this->defaultBedId($bedId);
         $side = strtolower($side);
         if ($side == 'right' || $side == 'r') {
-            $side = "R";
+            $sideShort = "R";
         } elseif ($side == 'left' || $side == 'l') {
-            $side = "L";
+            $sideShort = "L";
         } else {
             throw new \InvalidArgumentException("Side must be one of the following: left, right, L or R");
         }
+        $rounded = round($setting / 5) * 5;
+        if ($this->isFuzionBed($bedId)) {
+            $this->__bamkey($bedId, 'StartSleepNumberAdjustment', [strtolower($sideShort === 'L' ? 'left' : 'right'), (string)$rounded]);
+            return true;
+        }
         $data = [
-            'bed' => $this->defaultBedId($bedId),
-            'side' => $side,
-            "sleepNumber" => round($setting / 5) * 5
+            'bed' => $bedId,
+            'side' => $sideShort,
+            "sleepNumber" => $rounded
         ];
-        $this->_session_params['side'] = $side; // Must be added to the GET querystring
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/sleepNumber', "PUT", $data);
+        $this->_session_params['side'] = $sideShort; // Must be added to the GET querystring
+        $this->__makeRequest('/bed/' . $bedId . '/sleepNumber', "PUT", $data);
         unset($this->_session_params['side']);
         return true;
     }
@@ -1273,16 +1590,24 @@ class SleepyqPHP
         if ($setting < 0 || $setting > 100) {
             throw new \InvalidArgumentException("Invalid SleepNumber, must be between 0 and 100");
         }
+        $bedId = $this->defaultBedId($bedId);
         $side = strtolower($side);
         if ($side == 'right' || $side == 'r') {
-            $side = "R";
+            $sideShort = "R";
+            $sideWord = 'right';
         } elseif ($side == 'left' || $side == 'l') {
-            $side = "L";
+            $sideShort = "L";
+            $sideWord = 'left';
         } else {
             throw new \InvalidArgumentException("Side must be one of the following: left, right, L or R");
         }
-        $data = ['side' => $side, "sleepNumberFavorite" => round($setting / 5) * 5];
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/sleepNumberFavorite', "PUT", $data);
+        $rounded = round($setting / 5) * 5;
+        if ($this->isFuzionBed($bedId)) {
+            $this->__bamkey($bedId, 'SetFavoriteSleepNumber', [$sideWord, (string)$rounded]);
+            return true;
+        }
+        $data = ['side' => $sideShort, "sleepNumberFavorite" => $rounded];
+        $this->__makeRequest('/bed/' . $bedId . '/sleepNumberFavorite', "PUT", $data);
         return true;
     }
 
@@ -1295,7 +1620,26 @@ class SleepyqPHP
      */
     public function getFavSleepnumber($bedId = '')
     {
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/sleepNumberFavorite');
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            $left = intval($this->__bamkey($bedId, 'GetFavoriteSleepNumber', ['left']));
+            $right = intval($this->__bamkey($bedId, 'GetFavoriteSleepNumber', ['right']));
+            $r = [
+                'bedId' => $bedId,
+                'sleepNumberFavoriteLeft' => $left,
+                'sleepNumberFavoriteRight' => $right,
+                'left' => $left,
+                'right' => $right,
+                'data' => [
+                    'bedId' => $bedId,
+                    'sleepNumberFavoriteLeft' => $left,
+                    'sleepNumberFavoriteRight' => $right,
+                ]
+            ];
+            // return new FavSleepNumber($synthetic);
+        } else {
+            $r = $this->__makeRequest('/bed/' . $bedId . '/sleepNumberFavorite');
+        }
         $favSleepnumber = new FavSleepNumber($r);
         foreach (['Left', 'Right'] as $side) {
             $side_key = 'sleepNumberFavorite' . $side;
@@ -1310,6 +1654,11 @@ class SleepyqPHP
      */
     public function stopMotion($side, $bedId = '')
     {
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            $this->__bamkey($bedId, 'HaltAllActuators');
+            return true;
+        }
         $side = strtolower($side);
         if ($side == 'right' || $side == 'r') {
             $side = "R";
@@ -1319,13 +1668,18 @@ class SleepyqPHP
             throw new \InvalidArgumentException("Side must be one of the following: left, right, L or R");
         }
         $data = ["footMotion" => 1, "headMotion" => 1, "massageMotion" => 1, "side" => $side];
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/motion', "PUT", $data);
+        $this->__makeRequest('/bed/' . $bedId . '/foundation/motion', "PUT", $data);
         return true;
     }
 
     public function stopPump($bedId = '')
     {
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/pump/forceIdle', "PUT");
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            $this->__bamkey($bedId, 'InterruptSleepNumberAdjustment');
+            return true;
+        }
+        $this->__makeRequest('/bed/' . $bedId . '/pump/forceIdle', "PUT");
         return true;
     }
 
@@ -1381,7 +1735,20 @@ class SleepyqPHP
      */
     public function getFoundationSystem($bedId = '')
     {
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/system');
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            // Use cached light state if available to simulate PWM values
+            $lightState = $this->_fuzionLightState[$bedId]['state'] ?? 'off';
+            $pwm = $this->fuzionBrightnessWordToPwm($lightState);
+            $status = [
+                'fsLeftUnderbedLightPWM' => $pwm,
+                'fsRightUnderbedLightPWM' => $pwm,
+                'fsBoardFeatures' => null,
+                'fsBedType' => null,
+            ];
+            return new Status(['data' => $status] + $status);
+        }
+        $r = $this->__makeRequest('/bed/' . $bedId . '/foundation/system');
         return new Status($r);
     }
 
@@ -1415,10 +1782,20 @@ class SleepyqPHP
      */
     public function getFoundationFeatures($bedId = '')
     {
-        $fs = $this->getFoundationSystem($this->defaultBedId($bedId));
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            if (!isset($this->_fuzionFeatureCache[$bedId])) {
+                try {
+                    $raw = $this->__bamkey($bedId, 'GetSystemConfiguration');
+                    $this->_fuzionFeatureCache[$bedId] = $this->fuzionParseSystemConfiguration($raw);
+                } catch (Exception $e) {
+                    $this->_fuzionFeatureCache[$bedId] = $this->fuzionParseSystemConfiguration('');
+                }
+            }
+            return new FoundationFeatures($this->_fuzionFeatureCache[$bedId]);
+        }
+        $fs = $this->getFoundationSystem($bedId);
         $fsBoardFeatures = $fs->fsBoardFeatures ?: null;
-        $fsBedType = $fs->fsBedType ?: null;
-
         $feature = [
             'single' => false,
             'splitHead' => false,
@@ -1432,15 +1809,12 @@ class SleepyqPHP
             'leftUnderbedLightPMW' => $fs->fsLeftUnderbedLightPWM ?: false,
             'rightUnderbedLightPMW' => $fs->fsRightUnderbedLightPWM ?: false, // Only use this key (not left)
         ];
-
         if ($feature['hasMassageAndLight']) {
             $feature['hasUnderbedLight'] = true;
         }
-
         if ($feature['splitKing'] || $feature['splitHead']) {
             $feature['boardIsASingle'] = false;
         }
-
         return new FoundationFeatures($feature);
     }
 
@@ -1456,11 +1830,15 @@ class SleepyqPHP
         if ($position < 0 || $position > 100) {
             throw new \Exception("Invalid position, must be between 0 and 100");
         }
-
-        $side = strtolower($side) == 'right' ? 'R' : 'L';
-        $actuator = strtolower($actuator) == 'head' ? 'H' : 'F';
-        $data = ['position' => $position, 'side' => $side, 'actuator' => $actuator, 'speed' => $slowSpeed ? 1 : 0];
-        $r = $this->__makeRequest('/bed/' . $this->defaultBedId($bedId) . '/foundation/adjustment/micro', "PUT", $data);
+        $bedId = $this->defaultBedId($bedId);
+        $sideShort = strtolower($side) == 'right' ? 'R' : 'L';
+        $act = strtolower($actuator) == 'head' ? 'H' : 'F';
+        if ($this->isFuzionBed($bedId)) {
+            $this->__bamkey($bedId, 'SetActuatorTargetPosition', [strtolower($sideShort === 'L' ? 'left' : 'right'), strtolower($act === 'H' ? 'head' : 'foot'), (string)intval($position)]);
+            return true;
+        }
+        $data = ['position' => $position, 'side' => $sideShort, 'actuator' => $act, 'speed' => $slowSpeed ? 1 : 0];
+        $this->__makeRequest('/bed/' . $bedId . '/foundation/adjustment/micro', "PUT", $data);
         return true;
     }
 
@@ -1476,46 +1854,59 @@ class SleepyqPHP
      */
     public function getBedSidePresets(string $bedId = '')
     {
+        $bedId = $this->defaultBedId($bedId);
+        if ($this->isFuzionBed($bedId)) {
+            $data = [];
+            foreach (self::SIDES_NAMES as $side) {
+                try {
+                    $word = $this->__bamkey($bedId, 'GetCurrentPreset', [$side]);
+                    $presetNumber = $this->fuzionPresetWordToNumeric($word);
+                    if ($presetNumber !== null) {
+                        $data[$side] = [
+                            'side' => $side,
+                            'preset' => $presetNumber,
+                            'bed_id' => $bedId,
+                        ];
+                    }
+                } catch (Exception $e) {
+                    // ignore side issues
+                }
+            }
+            return $data;
+        }
         $fs = $this->getFoundationStatus($bedId);
-        // If no foundation
         if (!$fs->data) {
-            return
-                [
-                    self::LEFT => [
-                        'side' => self::LEFT,
-                        'preset' => null,
-                        'bed_id' => $bedId,
-                    ],
-                ];
+            return [
+                self::LEFT => [
+                    'side' => self::LEFT,
+                    'preset' => null,
+                    'bed_id' => $bedId,
+                ],
+            ];
         }
         $presetsString = $fs->fsCurrentPositionPreset;
         $presetsList = str_split($presetsString);
-        $presetData = [];
-
         if ($this->isSingleBed($bedId)) {
-            $presetData = [
+            return [
                 self::LEFT => [
                     'side' => self::LEFT,
                     'preset' => $presetsList[0],
-                    'bed_id' => $bedId,
-                ],
-            ];
-        } else {
-            $presetData = [
-                self::LEFT => [
-                    'side' => self::LEFT,
-                    'preset' => $presetsList[0],
-                    'bed_id' => $bedId,
-                ],
-                self::RIGHT => [
-                    'side' => self::RIGHT,
-                    'preset' => $presetsList[1],
                     'bed_id' => $bedId,
                 ],
             ];
         }
-
-        return $presetData;
+        return [
+            self::LEFT => [
+                'side' => self::LEFT,
+                'preset' => $presetsList[0],
+                'bed_id' => $bedId,
+            ],
+            self::RIGHT => [
+                'side' => self::RIGHT,
+                'preset' => $presetsList[1],
+                'bed_id' => $bedId,
+            ],
+        ];
     }
 
     /**
