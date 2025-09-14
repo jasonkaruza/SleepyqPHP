@@ -10,12 +10,7 @@
  * https://github.com/danpenn/SleepIQ/blob/1531466e2b64/control.go
  */
 
-// Change these DEFINE() values as desired
-define('WRITE_DEBUG_PRINT', false); // Set to true to enable logging to files
-define('WRITE_DEBUG_LOG', false); // Set to true to enable printing logs
-define('WRITE_DEBUG_MAIN_FILE', '/tmp/writeDebugLogs.txt');
-define('WRITE_DEBUG_JSON_LOGS', '/tmp/requestJSONHasLoginErrors.txt');
-define('SLEEPYQ_COOKIE_PATH', 'cookie/'); // Directory where cookie files will be stored while in use
+require_once __DIR__ . '/settings.php';
 
 //Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1500.95 Safari/537.36
 //Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 5.1; .NET CLR 1.0.3705; .NET CLR 1.1.4322; Media Center PC 4.0)
@@ -220,6 +215,51 @@ class SleepyqPHP
     private $_bedGenerations = []; // bedId => generation
     private $_fuzionFeatureCache = []; // bedId => parsed features
     private $_fuzionLightState = []; // bedId => ['state'=>word,'timer'=>int]
+    private $_lastBamkeyErrors = []; // bedId => list of recent bamkey errors
+
+    private function recordBamkeyError($bedId, $command, array $args, $e)
+    {
+        $this->_lastBamkeyErrors[$bedId][] = [
+            'cmd' => $command,
+            'args' => $args,
+            'error' => ($e instanceof Exception) ? $e->getMessage() : (string)$e,
+            'ts' => microtime(true),
+        ];
+        // keep only last 25
+        if (count($this->_lastBamkeyErrors[$bedId]) > 25) {
+            array_splice($this->_lastBamkeyErrors[$bedId], 0, -25);
+        }
+        if (function_exists('writeDebug')) {
+            writeDebug(WRITE_DEBUG_MAIN_FILE, "bamkey error ($command): " . (($e instanceof Exception) ? $e->getMessage() : $e));
+        }
+    }
+
+    private function bamkeyOrDefault($bedId, $command, array $args = [], $default = null)
+    {
+        try {
+            return $this->__bamkey($bedId, $command, $args);
+        } catch (Exception $e) {
+            $this->recordBamkeyError($bedId, $command, $args, $e);
+            return $default;
+        }
+    }
+
+    public function getLastBamkeyErrors($bedId = null)
+    {
+        if ($bedId === null) return $this->_lastBamkeyErrors;
+        return $this->_lastBamkeyErrors[$bedId] ?? [];
+    }
+
+    public function hadRecentBamkeyError($bedId, $withinSeconds = 5.0)
+    {
+        $errors = $this->_lastBamkeyErrors[$bedId] ?? [];
+        $cut = microtime(true) - $withinSeconds;
+        for ($i = count($errors) - 1; $i >= 0; $i--) {
+            if ($errors[$i]['ts'] >= $cut) return true;
+            if ($errors[$i]['ts'] < $cut) break;
+        }
+        return false;
+    }
 
     // Underbed lights are bed-wide. Not per side.
     const RIGHT_NIGHT_STAND = 1;
@@ -1390,33 +1430,41 @@ class SleepyqPHP
         }
         $bedId = $this->defaultBedId($bedId);
         if ($this->isFuzionBed($bedId)) {
-            // Retrieve manual light state (brightness + timer)
-            $manualVal = $this->__bamkey($bedId, 'GetUnderbedLightSettings');
+            // Determine capability first; if system features show no underbed light, return a structure that clearly indicates absence.
+            $features = $this->getFoundationFeatures($bedId); // safe cached call
+            $hasLight = isset($features->hasUnderbedLight) ? (bool)$features->hasUnderbedLight : false;
+            if (!$hasLight) {
+                $core = [
+                    'bedId' => $bedId,
+                    'outlet' => 3,
+                    'setting' => 0,
+                    'timer' => 0,
+                    'enableAuto' => false,
+                    'supported' => false, // explicit marker (legacy callers ignore unknown key)
+                ];
+                $synthetic = ['data' => $core] + $core;
+                return new Status($synthetic);
+            }
+            $manualVal = $this->bamkeyOrDefault($bedId, 'GetUnderbedLightSettings', [], 'off 0');
             $manualParts = preg_split('/\s+/', trim($manualVal));
             $manualState = strtolower($manualParts[0] ?? 'off');
             $manualTimer = isset($manualParts[1]) ? intval($manualParts[1]) : 0;
-            // Retrieve auto configuration to determine if auto is enabled
-            $autoVal = $this->__bamkey($bedId, 'GetUnderbedLightAutoSettings');
+            $autoVal = $this->bamkeyOrDefault($bedId, 'GetUnderbedLightAutoSettings', [], 'false off');
             $autoParts = preg_split('/\s+/', trim($autoVal));
             $autoEnabled = isset($autoParts[0]) ? ($autoParts[0] === 'true') : false;
             $autoBrightnessWord = isset($autoParts[1]) ? strtolower($autoParts[1]) : 'off';
-            // Effective visible state mirrors legacy semantics:
-            // If auto enabled -> treat as setting=1 (on) with timer preserved as 'Not set' (legacy shows timer only for manual mode)
             $effectiveStateWord = $autoEnabled ? 'auto' : $manualState;
-            $effectiveTimer = $autoEnabled ? 0 : $manualTimer; // 0/Not set semantics
+            $effectiveTimer = $autoEnabled ? 0 : $manualTimer;
             $this->_fuzionLightState[$bedId] = ['state' => $effectiveStateWord, 'timer' => $effectiveTimer, 'auto' => $autoEnabled, 'autoBrightness' => $autoBrightnessWord];
-            $core = array(
+            $core = [
                 'bedId' => $bedId,
                 'outlet' => 3,
                 'setting' => ($effectiveStateWord !== 'off') ? 1 : 0,
                 'timer' => $effectiveTimer,
-                // Add parity field to emulate legacy auto flag field name
                 'enableAuto' => $autoEnabled,
-            );
-            $synthetic = array('data' => $core);
-            foreach ($core as $k => $v) {
-                $synthetic[$k] = $v;
-            }
+                'supported' => true,
+            ];
+            $synthetic = ['data' => $core] + $core;
             return new Status($synthetic);
         }
         $this->_session_params['outletId'] = $light; // Must be added to the GET querystring
@@ -1622,8 +1670,10 @@ class SleepyqPHP
     {
         $bedId = $this->defaultBedId($bedId);
         if ($this->isFuzionBed($bedId)) {
-            $left = intval($this->__bamkey($bedId, 'GetFavoriteSleepNumber', ['left']));
-            $right = intval($this->__bamkey($bedId, 'GetFavoriteSleepNumber', ['right']));
+            $leftRaw = $this->bamkeyOrDefault($bedId, 'GetFavoriteSleepNumber', ['left'], null);
+            $rightRaw = $this->bamkeyOrDefault($bedId, 'GetFavoriteSleepNumber', ['right'], null);
+            $left = is_numeric($leftRaw) ? intval($leftRaw) : null;
+            $right = is_numeric($rightRaw) ? intval($rightRaw) : null;
             $r = [
                 'bedId' => $bedId,
                 'sleepNumberFavoriteLeft' => $left,
