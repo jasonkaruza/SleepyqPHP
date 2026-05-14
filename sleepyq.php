@@ -1323,7 +1323,7 @@ class SleepyqPHP
      * @param string $interval Defaults to 'D' for Day. Can also be 'M' or 'Y'
      * @return array Of Sleeper objects
      */
-    public function getSleepData(string $sleeperId = null, string $interval = 'D'): array
+    public function getSleepData(?string $sleeperId = null, string $interval = 'D'): array
     {
         // If provided interval is not valid, default to D
         if (!in_array($interval, ['D', 'M', 'Y'])) {
@@ -2007,7 +2007,7 @@ class SleepyqPHP
      * getFoundationFeatures()) if not null to extract the value. Otherwise,
      * uses $bedId to call getFoundationFeatures.
      */
-    public function isSingleBed(string $bedId = '', Status $foundationFeatures = null): bool
+    public function isSingleBed(string $bedId = '', ?Status $foundationFeatures = null): bool
     {
         if ($foundationFeatures) {
             $features = $foundationFeatures;
